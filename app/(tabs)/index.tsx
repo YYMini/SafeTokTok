@@ -169,32 +169,122 @@ export default function TrackingDashboard() {
 }
 
 function MapPlaceholder() {
-  const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
-  const markerRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+  const overlaysRef = useRef<any[]>([]);
   const watchIdRef = useRef<number | null>(null);
+  const intervalIdRef = useRef<number | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
 
+  const renderMarkers = (
+    targets: {
+      childId: number;
+      name: string;
+      latitude: number;
+      longitude: number;
+    }[],
+  ) => {
+    if (!window.kakao?.maps || !mapInstanceRef.current) return;
+
+    markersRef.current.forEach((marker) => marker.setMap(null));
+    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+
+    markersRef.current = [];
+    overlaysRef.current = [];
+
+    targets.forEach((target, index) => {
+      const position = new window.kakao.maps.LatLng(
+        target.latitude,
+        target.longitude,
+      );
+
+      const marker = new window.kakao.maps.Marker({
+        position,
+        map: mapInstanceRef.current,
+      });
+
+      const content = `
+        <div style="
+          background: white;
+          border: 1px solid #2563eb;
+          border-radius: 12px;
+          padding: 4px 8px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #2563eb;
+          white-space: nowrap;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        ">
+          ${target.name}
+        </div>
+      `;
+
+      const overlay = new window.kakao.maps.CustomOverlay({
+        position,
+        content,
+        yAnchor: 2.2,
+      });
+
+      overlay.setMap(mapInstanceRef.current);
+
+      markersRef.current.push(marker);
+      overlaysRef.current.push(overlay);
+
+      if (index === 0) {
+        mapInstanceRef.current.setCenter(position);
+      }
+    });
+  };
+  const getChildIdFromUrl = () => {
+    if (Platform.OS !== "web") return 1;
+
+    const params = new URLSearchParams(window.location.search);
+    const value = Number(params.get("childId"));
+    return Number.isNaN(value) || value <= 0 ? 1 : value;
+  };
+
+  const childId = getChildIdFromUrl();
+
+  const sendLocationToServer = async (lat: number, lng: number) => {
+    try {
+      await fetch("http://localhost:8080/api/locations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          childId,
+          latitude: lat,
+          longitude: lng,
+        }),
+      });
+    } catch (error) {
+      console.log("위치 전송 실패", error);
+    }
+  };
+
+  const fetchLatestLocations = async () => {
+    try {
+      const response = await fetch(
+        "http://localhost:8080/api/locations/latest",
+      );
+      const data = await response.json();
+
+      console.log("받은 latest 데이터", data);
+
+      if (Array.isArray(data) && data.length > 0) {
+        renderMarkers(data);
+        setIsReady(true);
+      }
+    } catch (error) {
+      console.log("최신 위치 조회 실패", error);
+    }
+  };
+
   useEffect(() => {
     if (Platform.OS !== "web") return;
-
-    const createOrMoveMarker = (lat: number, lng: number) => {
-      if (!window.kakao?.maps || !mapInstanceRef.current) return;
-
-      const position = new window.kakao.maps.LatLng(lat, lng);
-
-      if (!markerRef.current) {
-        markerRef.current = new window.kakao.maps.Marker({
-          position,
-        });
-        markerRef.current.setMap(mapInstanceRef.current);
-      } else {
-        markerRef.current.setPosition(position);
-      }
-
-      mapInstanceRef.current.setCenter(position);
-    };
 
     const startGeolocation = () => {
       if (!navigator.geolocation) {
@@ -205,8 +295,8 @@ function MapPlaceholder() {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          createOrMoveMarker(latitude, longitude);
           await sendLocationToServer(latitude, longitude);
+          await fetchLatestLocations();
           setIsReady(true);
         },
         (err) => {
@@ -222,7 +312,6 @@ function MapPlaceholder() {
       watchIdRef.current = navigator.geolocation.watchPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          createOrMoveMarker(latitude, longitude);
           await sendLocationToServer(latitude, longitude);
         },
         (err) => {
@@ -235,35 +324,27 @@ function MapPlaceholder() {
         },
       );
     };
-    const sendLocationToServer = async (lat: number, lng: number) => {
-      try {
-        await fetch("http://localhost:8080/api/locations", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            childId: 1,
-            latitude: lat,
-            longitude: lng,
-          }),
-        });
-      } catch (error) {
-        console.log("위치 전송 실패", error);
-      }
-    };
 
     const initMap = () => {
-      if (!mapRef.current || !window.kakao?.maps) return;
+      if (!mapContainerRef.current || !window.kakao?.maps) return;
 
       const defaultCenter = new window.kakao.maps.LatLng(37.5665, 126.978);
 
-      mapInstanceRef.current = new window.kakao.maps.Map(mapRef.current, {
-        center: defaultCenter,
-        level: 3,
-      });
+      mapInstanceRef.current = new window.kakao.maps.Map(
+        mapContainerRef.current,
+        {
+          center: defaultCenter,
+          level: 3,
+        },
+      );
 
       startGeolocation();
+
+      fetchLatestLocations();
+
+      intervalIdRef.current = window.setInterval(() => {
+        fetchLatestLocations();
+      }, 3000);
     };
 
     const onLoad = () => {
@@ -294,6 +375,9 @@ function MapPlaceholder() {
       }
       if (watchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      if (intervalIdRef.current !== null) {
+        clearInterval(intervalIdRef.current);
       }
     };
   }, []);
@@ -341,7 +425,7 @@ function MapPlaceholder() {
         </View>
       )}
 
-      <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+      <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
     </View>
   );
 }
