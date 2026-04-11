@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "STT",
-    "slug": "STT",
+    "slug": "stt",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.STT"
+      "package": "com.anonymous.stt"
     },
     "web": {
       "output": "static",
@@ -32,6 +32,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
       [
         "expo-splash-screen",
         {
