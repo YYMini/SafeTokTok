@@ -9,7 +9,6 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActionSheetIOS,
-  ActivityIndicator,
   Alert,
   Image,
   Keyboard,
@@ -24,12 +23,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-declare global {
-  interface Window {
-    kakao: any;
-  }
-}
 
 type Target = {
   id: string;
@@ -53,7 +46,7 @@ const DEFAULT_PROFILE: Profile = {
   name: "보호자",
   userId: "admin",
   email: "stt@naver.com",
-  phone: "010-0000-0000",
+  phone: "010-1234-5678",
   imageUri: null,
 };
 
@@ -113,7 +106,7 @@ export default function TrackingDashboard() {
     try {
       await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
     } catch {
-      Alert.alert("저장 실패", "프로필 설정을 저장하지 못했어요.");
+      Alert.alert("저장 실패", "프로필 정보를 저장하지 못했어요.");
     }
   };
 
@@ -169,263 +162,23 @@ export default function TrackingDashboard() {
 }
 
 function MapPlaceholder() {
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
-  const overlaysRef = useRef<any[]>([]);
-  const watchIdRef = useRef<number | null>(null);
-  const intervalIdRef = useRef<number | null>(null);
-  const [isReady, setIsReady] = useState(false);
-  const [errorText, setErrorText] = useState("");
-
-  const renderMarkers = (
-    targets: {
-      childId: number;
-      name: string;
-      latitude: number;
-      longitude: number;
-    }[],
-  ) => {
-    if (!window.kakao?.maps || !mapInstanceRef.current) return;
-
-    markersRef.current.forEach((marker) => marker.setMap(null));
-    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
-
-    markersRef.current = [];
-    overlaysRef.current = [];
-
-    targets.forEach((target, index) => {
-      const position = new window.kakao.maps.LatLng(
-        target.latitude,
-        target.longitude,
-      );
-
-      const marker = new window.kakao.maps.Marker({
-        position,
-        map: mapInstanceRef.current,
-      });
-
-      const content = `
-        <div style="
-          background: white;
-          border: 1px solid #2563eb;
-          border-radius: 12px;
-          padding: 4px 8px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #2563eb;
-          white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-        ">
-          ${target.name}
-        </div>
-      `;
-
-      const overlay = new window.kakao.maps.CustomOverlay({
-        position,
-        content,
-        yAnchor: 2.2,
-      });
-
-      overlay.setMap(mapInstanceRef.current);
-
-      markersRef.current.push(marker);
-      overlaysRef.current.push(overlay);
-
-      if (index === 0) {
-        mapInstanceRef.current.setCenter(position);
-      }
-    });
-  };
-  const getChildIdFromUrl = () => {
-    if (Platform.OS !== "web") return 1;
-
-    const params = new URLSearchParams(window.location.search);
-    const value = Number(params.get("childId"));
-    return Number.isNaN(value) || value <= 0 ? 1 : value;
-  };
-
-  const childId = getChildIdFromUrl();
-
-  const sendLocationToServer = async (lat: number, lng: number) => {
-    try {
-      await fetch("http://localhost:8080/api/locations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          childId,
-          latitude: lat,
-          longitude: lng,
-        }),
-      });
-    } catch (error) {
-      console.log("위치 전송 실패", error);
-    }
-  };
-
-  const fetchLatestLocations = async () => {
-    try {
-      const response = await fetch(
-        "http://localhost:8080/api/locations/latest",
-      );
-      const data = await response.json();
-
-      console.log("받은 latest 데이터", data);
-
-      if (Array.isArray(data) && data.length > 0) {
-        renderMarkers(data);
-        setIsReady(true);
-      }
-    } catch (error) {
-      console.log("최신 위치 조회 실패", error);
-    }
-  };
-
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-
-    const startGeolocation = () => {
-      if (!navigator.geolocation) {
-        setErrorText("이 브라우저는 위치 정보를 지원하지 않습니다.");
-        return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const { latitude, longitude } = pos.coords;
-          await sendLocationToServer(latitude, longitude);
-          await fetchLatestLocations();
-          setIsReady(true);
-        },
-        (err) => {
-          setErrorText(`현재 위치를 가져오지 못했습니다. (${err.message})`);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        },
-      );
-
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const { latitude, longitude } = pos.coords;
-          await sendLocationToServer(latitude, longitude);
-        },
-        (err) => {
-          setErrorText(`위치 추적 실패: ${err.message}`);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 3000,
-        },
-      );
-    };
-
-    const initMap = () => {
-      if (!mapContainerRef.current || !window.kakao?.maps) return;
-
-      const defaultCenter = new window.kakao.maps.LatLng(37.5665, 126.978);
-
-      mapInstanceRef.current = new window.kakao.maps.Map(
-        mapContainerRef.current,
-        {
-          center: defaultCenter,
-          level: 3,
-        },
-      );
-
-      startGeolocation();
-
-      fetchLatestLocations();
-
-      intervalIdRef.current = window.setInterval(() => {
-        fetchLatestLocations();
-      }, 3000);
-    };
-
-    const onLoad = () => {
-      window.kakao.maps.load(initMap);
-    };
-
-    const existingScript = document.querySelector(
-      'script[data-kakao-map="true"]',
-    ) as HTMLScriptElement | null;
-
-    if (window.kakao?.maps) {
-      window.kakao.maps.load(initMap);
-    } else if (existingScript) {
-      existingScript.addEventListener("load", onLoad);
-    } else {
-      const script = document.createElement("script");
-      script.src =
-        "https://dapi.kakao.com/v2/maps/sdk.js?appkey=d74e3a0d741775a29ef17516bf90fe89&autoload=false";
-      script.async = true;
-      script.setAttribute("data-kakao-map", "true");
-      script.addEventListener("load", onLoad);
-      document.head.appendChild(script);
-    }
-
-    return () => {
-      if (existingScript) {
-        existingScript.removeEventListener("load", onLoad);
-      }
-      if (watchIdRef.current !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      if (intervalIdRef.current !== null) {
-        clearInterval(intervalIdRef.current);
-      }
-    };
-  }, []);
-
-  if (Platform.OS !== "web") {
-    return (
-      <View
-        style={[styles.map, { justifyContent: "center", alignItems: "center" }]}
-      >
-        <Text>카카오맵은 현재 web에서 테스트 중입니다.</Text>
-      </View>
-    );
-  }
+  const SCHOOL = { x: 155, y: 185 };
+  const R = 95;
 
   return (
     <View style={styles.map}>
-      {!isReady && !errorText && (
-        <ActivityIndicator
-          size="large"
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            marginLeft: -18,
-            marginTop: -18,
-            zIndex: 2,
-          }}
-        />
-      )}
+      <View style={[styles.road, { top: 140, height: 10, opacity: 0.35 }]} />
+      <View style={[styles.road, { top: 340, height: 10, opacity: 0.35 }]} />
+      <View style={[styles.roadV, { left: 210, width: 10, opacity: 0.35 }]} />
+      <View style={[styles.roadV, { left: 90, width: 10, opacity: 0.25 }]} />
 
-      {!!errorText && (
-        <View
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 16,
-            right: 16,
-            zIndex: 3,
-            backgroundColor: "white",
-            padding: 12,
-            borderRadius: 12,
-          }}
-        >
-          <Text>{errorText}</Text>
-        </View>
-      )}
+      <View style={[styles.geofence, { left: SCHOOL.x - R, top: SCHOOL.y - R }]} />
 
-      <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+      <Text style={[styles.schoolTextOnly, { left: 125, top: 180 }]}>강남초등학교</Text>
+
+      <Marker color={COLORS.success} label="이서윤" style={{ left: 100, top: 147 }} />
+      <Marker color="#F97316" label="김민준" danger style={{ left: 240, top: 280 }} />
+      <Marker color={COLORS.primary} label="보호자" style={{ left: 150, top: 455 }} />
     </View>
   );
 }
@@ -487,10 +240,7 @@ function PhoneVisualSlot({
   const safeCursorIndex = Math.max(0, Math.min(cursorIndex, max));
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={[styles.slotWrap, { width: slotWidth, height: digitH }]}
-    >
+    <Pressable onPress={onPress} style={[styles.slotWrap, { width: slotWidth, height: digitH }]}>
       <View style={styles.slotRow} pointerEvents="none">
         {shownBase.split("").map((ch, i) => (
           <Text
@@ -507,18 +257,11 @@ function PhoneVisualSlot({
       </View>
 
       <View style={[styles.slotRow, styles.slotOverlay]} pointerEvents="none">
-        {digits
-          .padEnd(max, " ")
-          .slice(0, max)
-          .split("")
-          .map((ch, i) => (
-            <Text
-              key={`t-${i}`}
-              style={[styles.slotTopChar, { width: digitW }]}
-            >
-              {ch}
-            </Text>
-          ))}
+        {(digits.padEnd(max, " ").slice(0, max)).split("").map((ch, i) => (
+          <Text key={`t-${i}`} style={[styles.slotTopChar, { width: digitW }]}>
+            {ch}
+          </Text>
+        ))}
       </View>
 
       {editable && showCursor && (
@@ -597,9 +340,7 @@ function ProfileModal({
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [editingName, setEditingName] = useState(false);
-  const [editingKey, setEditingKey] = useState<
-    null | "userId" | "email" | "phone"
-  >(null);
+  const [editingKey, setEditingKey] = useState<null | "userId" | "email" | "phone">(null);
 
   const userIdRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
@@ -646,8 +387,7 @@ function ProfileModal({
     setTooltipField(null);
   };
 
-  const onlyDigits = (t: string, max: number) =>
-    t.replace(/[^0-9]/g, "").slice(0, max);
+  const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
 
   const splitPhone = (formatted: string) => {
     const d = (formatted ?? "").replace(/[^0-9]/g, "").slice(0, 11);
@@ -726,10 +466,8 @@ function ProfileModal({
     phoneDigits.length < 3 ? "A" : phoneDigits.length < 7 ? "B" : "C";
 
   const cursorIndexA = Math.min(phoneDigits.length, 3);
-  const cursorIndexB =
-    phoneDigits.length <= 3 ? 0 : Math.min(phoneDigits.length - 3, 4);
-  const cursorIndexC =
-    phoneDigits.length <= 7 ? 0 : Math.min(phoneDigits.length - 7, 4);
+  const cursorIndexB = phoneDigits.length <= 3 ? 0 : Math.min(phoneDigits.length - 3, 4);
+  const cursorIndexC = phoneDigits.length <= 7 ? 0 : Math.min(phoneDigits.length - 7, 4);
 
   useEffect(() => {
     if (!visible) return;
@@ -778,17 +516,13 @@ function ProfileModal({
 
     if (cur.granted) {
       // @ts-ignore
-      const access = cur.accessPrivileges as
-        | undefined
-        | "all"
-        | "limited"
-        | "none";
+      const access = cur.accessPrivileges as undefined | "all" | "limited" | "none";
 
       if (Platform.OS === "ios" && access === "limited") {
         return await new Promise<boolean>((resolve) => {
           Alert.alert(
             "사진 접근 권한",
-            "현재 사진 접근이 제한되어 있습니다\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
+            "현재 사진 접근이 제한되어 있습니다.\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
             [
               { text: "취소", style: "cancel", onPress: () => resolve(false) },
               {
@@ -798,7 +532,7 @@ function ProfileModal({
                   resolve(false);
                 },
               },
-            ],
+            ]
           );
         });
       }
@@ -811,23 +545,15 @@ function ProfileModal({
 
       if (req.granted) {
         // @ts-ignore
-        const access = req.accessPrivileges as
-          | undefined
-          | "all"
-          | "limited"
-          | "none";
+        const access = req.accessPrivileges as undefined | "all" | "limited" | "none";
 
         if (Platform.OS === "ios" && access === "limited") {
           return await new Promise<boolean>((resolve) => {
             Alert.alert(
               "사진 접근 권한",
-              "현재 사진 접근이 제한되어 있습니다\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
+              "현재 사진 접근이 제한되어 있습니다.\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
               [
-                {
-                  text: "취소",
-                  style: "cancel",
-                  onPress: () => resolve(false),
-                },
+                { text: "취소", style: "cancel", onPress: () => resolve(false) },
                 {
                   text: "설정으로 이동",
                   onPress: () => {
@@ -835,7 +561,7 @@ function ProfileModal({
                     resolve(false);
                   },
                 },
-              ],
+              ]
             );
           });
         }
@@ -856,7 +582,7 @@ function ProfileModal({
                 resolve(false);
               },
             },
-          ],
+          ]
         );
       });
     }
@@ -874,7 +600,7 @@ function ProfileModal({
               resolve(false);
             },
           },
-        ],
+        ]
       );
     });
   };
@@ -889,6 +615,7 @@ function ProfileModal({
       selectionLimit: 1 as any,
       allowsEditing: true,
       quality: 0.9,
+      aspect: [1, 1],
     });
 
     if (!result.canceled) {
@@ -924,16 +651,12 @@ function ProfileModal({
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         { options, cancelButtonIndex, destructiveButtonIndex },
-        onSelect,
+        onSelect
       );
     } else {
       Alert.alert("프로필 사진", "원하는 작업을 선택해 주세요.", [
         { text: "사진 등록", onPress: pickImage },
-        {
-          text: "기본 이미지 적용",
-          style: "destructive",
-          onPress: resetToDefault,
-        },
+        { text: "기본 이미지 적용", style: "destructive", onPress: resetToDefault },
         { text: "취소", style: "cancel" },
       ]);
     }
@@ -989,6 +712,7 @@ function ProfileModal({
     const phone = `${aView}-${bView}-${cView}`;
     const nextProfile = {
       ...draft,
+      name: draft.name.trim() || "보호자",
       userId: draft.userId.trim(),
       email: draft.email.trim(),
       phone,
@@ -1006,17 +730,10 @@ function ProfileModal({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <Pressable style={styles.modalDim} onPress={handleClose} />
 
-      <View
-        style={{ position: "absolute", opacity: 0, left: -9999, top: -9999 }}
-      >
+      <View style={{ position: "absolute", opacity: 0, left: -9999, top: -9999 }}>
         <Text
           onLayout={(e) => {
             const { width, height } = e.nativeEvent.layout;
@@ -1026,8 +743,7 @@ function ProfileModal({
           style={{
             fontSize: 14,
             fontWeight: "800",
-            fontVariant:
-              Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
+            fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
             letterSpacing: 0,
             includeFontPadding: false,
           }}
@@ -1040,12 +756,8 @@ function ProfileModal({
         <View style={styles.modalSheet}>
           <View style={styles.modalTop}>
             <Text style={styles.modalTitle}>내 프로필</Text>
-            <Pressable
-              onPress={handleClose}
-              style={styles.modalCloseBtn}
-              hitSlop={10}
-            >
-              <Ionicons name="close" size={12} color="#fff" />
+            <Pressable onPress={handleClose} style={styles.modalCloseBtn} hitSlop={10}>
+              <Ionicons name="close" size={20} color="#fff" />
             </Pressable>
           </View>
 
@@ -1061,22 +773,14 @@ function ProfileModal({
                   {draft.imageUri ? (
                     <Image
                       source={{ uri: draft.imageUri }}
-                      style={{ width: 86, height: 86, borderRadius: 43 }}
+                      style={{ width: 96, height: 96, borderRadius: 48 }}
                     />
                   ) : (
-                    <Ionicons
-                      name="person"
-                      size={30}
-                      color="rgba(255,255,255,0.95)"
-                    />
+                    <Ionicons name="person" size={36} color="rgba(255,255,255,0.95)" />
                   )}
 
-                  <Pressable
-                    onPress={openPhotoMenu}
-                    style={styles.cameraBadge}
-                    hitSlop={10}
-                  >
-                    <Ionicons name="camera" size={14} color={COLORS.primary} />
+                  <Pressable onPress={openPhotoMenu} style={styles.cameraBadge} hitSlop={10}>
+                    <Ionicons name="camera" size={16} color={COLORS.primary} />
                   </Pressable>
                 </View>
 
@@ -1103,247 +807,186 @@ function ProfileModal({
                       hitSlop={10}
                       style={styles.namePress}
                     >
-                      <Text style={styles.profileName}>
-                        {draft.name || "보호자"}
-                      </Text>
+                      <Text style={styles.profileName}>{draft.name || "보호자"}</Text>
                     </Pressable>
                   )}
                 </View>
               </View>
 
               <View style={styles.infoCard}>
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="key-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.userId}
-                          onPress={() => showTooltip("userId")}
-                        />
-                      </View>
-
-                      <Text style={styles.infoLabel}>ID</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "userId"}
-                        message={errors.userId}
-                      />
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <View style={styles.iconWrap}>
+                      <Ionicons name="key-outline" size={18} color="rgba(17,24,39,0.55)" />
+                      <ErrorDot visible={!!errors.userId} onPress={() => showTooltip("userId")} />
                     </View>
 
-                    <View style={{ minWidth: 160, alignItems: "flex-end" }}>
-                      <TextInput
-                        ref={userIdRef}
-                        value={draft.userId}
-                        editable={editingKey === "userId"}
-                        selection={userIdSelection}
-                        onSelectionChange={(e) =>
-                          setUserIdSelection(e.nativeEvent.selection)
+                    <Text style={styles.infoLabel}>ID</Text>
+                    <ErrorTooltip visible={tooltipField === "userId"} message={errors.userId} />
+                  </View>
+
+                  <View style={{ minWidth: 160, alignItems: "flex-end" }}>
+                    <TextInput
+                      ref={userIdRef}
+                      value={draft.userId}
+                      editable={editingKey === "userId"}
+                      selection={userIdSelection}
+                      onSelectionChange={(e) => setUserIdSelection(e.nativeEvent.selection)}
+                      onFocus={() => {
+                        const len = draft.userId.length;
+                        setUserIdSelection({ start: len, end: len });
+                      }}
+                      placeholder="아이디 입력"
+                      placeholderTextColor="rgba(17,24,39,0.28)"
+                      onChangeText={(t) => {
+                        setDraft((p) => ({ ...p, userId: t }));
+                        const len = t.length;
+                        setUserIdSelection({ start: len, end: len });
+                        setErrors((prev) => ({ ...prev, userId: undefined }));
+                        if (tooltipField === "userId") {
+                          clearTooltipTimer();
+                          setTooltipField(null);
                         }
-                        onFocus={() => {
-                          const len = draft.userId.length;
-                          setUserIdSelection({ start: len, end: len });
-                        }}
-                        placeholder="아이디 입력"
-                        placeholderTextColor="rgba(17,24,39,0.28)"
-                        onChangeText={(t) => {
-                          setDraft((p) => ({ ...p, userId: t }));
-                          const len = t.length;
-                          setUserIdSelection({ start: len, end: len });
-                          setErrors((prev) => ({ ...prev, userId: undefined }));
-                          if (tooltipField === "userId") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        onSubmitEditing={endEditing}
-                        style={[
-                          styles.infoInput,
-                          editingKey !== "userId" && styles.infoInputReadOnly,
-                        ]}
-                        returnKeyType="done"
-                      />
+                      }}
+                      onSubmitEditing={endEditing}
+                      style={[styles.infoInput, editingKey !== "userId" && styles.infoInputReadOnly]}
+                      returnKeyType="done"
+                    />
 
-                      {editingKey !== "userId" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("userId")}
-                        />
-                      )}
-                    </View>
+                    {editingKey !== "userId" && (
+                      <Pressable style={StyleSheet.absoluteFill} onPress={() => enterEdit("userId")} />
+                    )}
                   </View>
                 </View>
+
                 <View style={styles.cardDivider} />
 
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="mail-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.email}
-                          onPress={() => showTooltip("email")}
-                        />
-                      </View>
-
-                      <Text style={styles.infoLabel}>이메일</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "email"}
-                        message={errors.email}
-                      />
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <View style={styles.iconWrap}>
+                      <Ionicons name="mail-outline" size={18} color="rgba(17,24,39,0.55)" />
+                      <ErrorDot visible={!!errors.email} onPress={() => showTooltip("email")} />
                     </View>
 
-                    <View style={{ minWidth: 160, alignItems: "flex-end" }}>
-                      <TextInput
-                        ref={emailRef}
-                        value={draft.email}
-                        editable={editingKey === "email"}
-                        selection={emailSelection}
-                        onSelectionChange={(e) =>
-                          setEmailSelection(e.nativeEvent.selection)
+                    <Text style={styles.infoLabel}>이메일</Text>
+                    <ErrorTooltip visible={tooltipField === "email"} message={errors.email} />
+                  </View>
+
+                  <View style={{ minWidth: 160, alignItems: "flex-end" }}>
+                    <TextInput
+                      ref={emailRef}
+                      value={draft.email}
+                      editable={editingKey === "email"}
+                      selection={emailSelection}
+                      onSelectionChange={(e) => setEmailSelection(e.nativeEvent.selection)}
+                      onFocus={() => {
+                        const len = draft.email.length;
+                        setEmailSelection({ start: len, end: len });
+                      }}
+                      placeholder="이메일 입력"
+                      placeholderTextColor="rgba(17,24,39,0.28)"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onChangeText={(t) => {
+                        setDraft((p) => ({ ...p, email: t }));
+                        const len = t.length;
+                        setEmailSelection({ start: len, end: len });
+                        setErrors((prev) => ({ ...prev, email: undefined }));
+                        if (tooltipField === "email") {
+                          clearTooltipTimer();
+                          setTooltipField(null);
                         }
-                        onFocus={() => {
-                          const len = draft.email.length;
-                          setEmailSelection({ start: len, end: len });
-                        }}
-                        placeholder="이메일 입력"
-                        placeholderTextColor="rgba(17,24,39,0.28)"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={(t) => {
-                          setDraft((p) => ({ ...p, email: t }));
-                          const len = t.length;
-                          setEmailSelection({ start: len, end: len });
-                          setErrors((prev) => ({ ...prev, email: undefined }));
-                          if (tooltipField === "email") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        onSubmitEditing={endEditing}
-                        style={[
-                          styles.infoInput,
-                          editingKey !== "email" && styles.infoInputReadOnly,
-                        ]}
-                        returnKeyType="done"
-                      />
+                      }}
+                      onSubmitEditing={endEditing}
+                      style={[styles.infoInput, editingKey !== "email" && styles.infoInputReadOnly]}
+                      returnKeyType="done"
+                    />
 
-                      {editingKey !== "email" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("email")}
-                        />
-                      )}
-                    </View>
+                    {editingKey !== "email" && (
+                      <Pressable style={StyleSheet.absoluteFill} onPress={() => enterEdit("email")} />
+                    )}
                   </View>
                 </View>
+
                 <View style={styles.cardDivider} />
 
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="call-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.phone}
-                          onPress={() => showTooltip("phone")}
-                        />
-                      </View>
-
-                      <Text style={styles.infoLabel}>전화번호</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "phone"}
-                        message={errors.phone}
-                      />
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <View style={styles.iconWrap}>
+                      <Ionicons name="call-outline" size={18} color="rgba(17,24,39,0.55)" />
+                      <ErrorDot visible={!!errors.phone} onPress={() => showTooltip("phone")} />
                     </View>
 
-                    <View style={styles.phoneRowBox}>
-                      <PhoneVisualSlot
-                        max={3}
-                        baseText={A_BASE}
-                        digits={aDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "A"}
-                        cursorIndex={cursorIndexA}
-                        onPress={() => enterEdit("phone")}
-                      />
+                    <Text style={styles.infoLabel}>연락처</Text>
+                    <ErrorTooltip visible={tooltipField === "phone"} message={errors.phone} />
+                  </View>
 
-                      <Text style={styles.phoneHyphen}>-</Text>
+                  <View style={styles.phoneRowBox}>
+                    <PhoneVisualSlot
+                      max={3}
+                      baseText={A_BASE}
+                      digits={aDigits}
+                      editable={editingKey === "phone"}
+                      digitW={digitW}
+                      digitH={digitH}
+                      showCursor={activePhoneSection === "A"}
+                      cursorIndex={cursorIndexA}
+                      onPress={() => enterEdit("phone")}
+                    />
 
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={bDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "B"}
-                        cursorIndex={cursorIndexB}
-                        onPress={() => enterEdit("phone")}
-                      />
+                    <Text style={styles.phoneHyphen}>-</Text>
 
-                      <Text style={styles.phoneHyphen}>-</Text>
+                    <PhoneVisualSlot
+                      max={4}
+                      baseText={B_BASE}
+                      digits={bDigits}
+                      editable={editingKey === "phone"}
+                      digitW={digitW}
+                      digitH={digitH}
+                      showCursor={activePhoneSection === "B"}
+                      cursorIndex={cursorIndexB}
+                      onPress={() => enterEdit("phone")}
+                    />
 
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={cDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "C"}
-                        cursorIndex={cursorIndexC}
-                        onPress={() => enterEdit("phone")}
-                      />
+                    <Text style={styles.phoneHyphen}>-</Text>
 
-                      <TextInput
-                        ref={phoneInputRef}
-                        value={phoneDigits}
-                        editable={editingKey === "phone"}
-                        keyboardType="number-pad"
-                        maxLength={11}
-                        caretHidden
-                        contextMenuHidden
-                        selection={{
-                          start: phoneDigits.length,
-                          end: phoneDigits.length,
-                        }}
-                        onChangeText={(text) => {
-                          const next = text.replace(/[^0-9]/g, "").slice(0, 11);
-                          setPhoneDigits(next);
-                          setErrors((prev) => ({ ...prev, phone: undefined }));
-                          if (tooltipField === "phone") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        style={styles.hiddenPhoneInput}
-                      />
+                    <PhoneVisualSlot
+                      max={4}
+                      baseText={B_BASE}
+                      digits={cDigits}
+                      editable={editingKey === "phone"}
+                      digitW={digitW}
+                      digitH={digitH}
+                      showCursor={activePhoneSection === "C"}
+                      cursorIndex={cursorIndexC}
+                      onPress={() => enterEdit("phone")}
+                    />
 
-                      {editingKey !== "phone" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("phone")}
-                        />
-                      )}
-                    </View>
+                    <TextInput
+                      ref={phoneInputRef}
+                      value={phoneDigits}
+                      editable={editingKey === "phone"}
+                      keyboardType="number-pad"
+                      maxLength={11}
+                      caretHidden
+                      contextMenuHidden
+                      selection={{ start: phoneDigits.length, end: phoneDigits.length }}
+                      onChangeText={(text) => {
+                        const next = text.replace(/[^0-9]/g, "").slice(0, 11);
+                        setPhoneDigits(next);
+                        setErrors((prev) => ({ ...prev, phone: undefined }));
+                        if (tooltipField === "phone") {
+                          clearTooltipTimer();
+                          setTooltipField(null);
+                        }
+                      }}
+                      style={styles.hiddenPhoneInput}
+                    />
+
+                    {editingKey !== "phone" && (
+                      <Pressable style={StyleSheet.absoluteFill} onPress={() => enterEdit("phone")} />
+                    )}
                   </View>
                 </View>
 
@@ -1351,14 +994,8 @@ function ProfileModal({
               </View>
 
               <View style={styles.linkedHeader}>
-                <Ionicons
-                  name="person-outline"
-                  size={16}
-                  color="rgba(17,24,39,0.6)"
-                />
-                <Text style={styles.linkedTitle}>
-                  연결된 대상자 ({draftTargets.length})
-                </Text>
+                <Ionicons name="person-outline" size={18} color="rgba(17,24,39,0.6)" />
+                <Text style={styles.linkedTitle}>연결된 대상자 ({draftTargets.length})</Text>
               </View>
 
               <View style={styles.targetsCard}>
@@ -1386,47 +1023,29 @@ function ProfileModal({
                           style={styles.trashBtn}
                           hitSlop={10}
                         >
-                          <Ionicons
-                            name="trash"
-                            size={18}
-                            color={COLORS.danger}
-                          />
+                          <Ionicons name="trash" size={18} color={COLORS.danger} />
                         </Pressable>
                       </View>
 
-                      {index !== draftTargets.length - 1 && (
-                        <View style={styles.divider} />
-                      )}
+                      {index !== draftTargets.length - 1 && <View style={styles.divider} />}
                     </View>
                   ))}
 
                   {draftTargets.length === 0 && (
                     <View style={styles.emptyTargetsBox}>
-                      <Text style={styles.emptyTargetsText}>
-                        연결된 대상자가 없습니다.
-                      </Text>
+                      <Text style={styles.emptyTargetsText}>연결된 대상자가 없습니다.</Text>
                     </View>
                   )}
                 </ScrollView>
               </View>
 
               <View style={styles.modalBottomBtns}>
-                <Pressable
-                  style={[styles.bottomBtn, styles.btnPrimary]}
-                  onPress={onSave}
-                >
-                  <Text style={[styles.bottomBtnText, styles.btnPrimaryText]}>
-                    저장
-                  </Text>
+                <Pressable style={[styles.bottomBtn, styles.btnGhost]} onPress={onSave}>
+                  <Text style={[styles.bottomBtnText, styles.btnGhostText]}>저장</Text>
                 </Pressable>
 
-                <Pressable
-                  style={[styles.bottomBtn, styles.btnGhost]}
-                  onPress={onLogout}
-                >
-                  <Text style={[styles.bottomBtnText, styles.btnGhostText]}>
-                    로그아웃
-                  </Text>
+                <Pressable style={[styles.bottomBtn, styles.btnGhost]} onPress={onLogout}>
+                  <Text style={[styles.bottomBtnText, styles.btnGhostText]}>로그아웃</Text>
                 </Pressable>
               </View>
             </Pressable>
@@ -1444,12 +1063,7 @@ const styles = StyleSheet.create({
 
   map: { flex: 1, backgroundColor: "#DCEEFF" },
   road: { position: "absolute", left: 0, right: 0, backgroundColor: "#94A3B8" },
-  roadV: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    backgroundColor: "#94A3B8",
-  },
+  roadV: { position: "absolute", top: 0, bottom: 0, backgroundColor: "#94A3B8" },
 
   geofence: {
     position: "absolute",
@@ -1506,10 +1120,7 @@ const styles = StyleSheet.create({
   },
   nameText: { color: "#fff", fontWeight: "900", fontSize: 13.5 },
 
-  modalDim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
+  modalDim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
   modalCenter: {
     flex: 1,
     justifyContent: "center",
@@ -1526,12 +1137,8 @@ const styles = StyleSheet.create({
     ...SHADOW.floating,
   },
 
-  modalScroll: {
-    flexGrow: 0,
-  },
-  modalScrollContent: {
-    paddingBottom: 0,
-  },
+  modalScroll: { flexGrow: 0 },
+  modalScrollContent: { paddingBottom: 0 },
 
   modalTop: {
     height: 50,
@@ -1551,20 +1158,19 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   modalCloseBtn: {
-    width: 23,
-    height: 23,
-    borderRadius: 17,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 2,
   },
 
   profileCenter: { alignItems: "center", paddingTop: 22 },
   profileAvatar: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     backgroundColor: "rgba(59,130,246,0.85)",
     alignItems: "center",
     justifyContent: "center",
@@ -1573,11 +1179,11 @@ const styles = StyleSheet.create({
   },
   cameraBadge: {
     position: "absolute",
-    right: 4,
-    bottom: 4,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    right: 2,
+    bottom: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
@@ -1585,12 +1191,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.06)",
   },
 
-  nameSlot: {
-    marginTop: 10,
-    height: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  nameSlot: { marginTop: 10, height: 28, justifyContent: "center", alignItems: "center" },
   namePress: { height: 28, justifyContent: "center" },
   profileName: {
     fontSize: 20,
@@ -1614,12 +1215,7 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
 
-  infoCard: {
-    marginHorizontal: 16,
-    marginTop: 0,
-    backgroundColor: "#fff",
-    overflow: "visible",
-  },
+  infoCard: { marginHorizontal: 16, marginTop: 0, backgroundColor: "#fff", overflow: "visible" },
   cardDivider: {
     height: 1,
     backgroundColor: "rgba(17,24,39,0.06)",
@@ -1732,21 +1328,9 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
 
-  slotWrap: {
-    position: "relative",
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  slotRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-start",
-  },
-  slotOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-  },
+  slotWrap: { position: "relative", justifyContent: "center", alignItems: "flex-start" },
+  slotRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-start" },
+  slotOverlay: { position: "absolute", left: 0, right: 0 },
 
   slotBaseChar: {
     fontSize: 14,
@@ -1801,18 +1385,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(17,24,39,0.06)",
     overflow: "hidden",
   },
-  targetsScroll: {
-    flex: 1,
-  },
-  targetsScrollContent: {
-    minHeight: 150,
-  },
-  targetRow: {
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  targetsScroll: { flex: 1 },
+  targetsScrollContent: { minHeight: 150 },
+
+  targetRow: { padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
   divider: { height: 1, backgroundColor: "rgba(17,24,39,0.06)" },
 
   emptyTargetsBox: {

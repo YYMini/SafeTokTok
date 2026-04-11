@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -18,91 +17,16 @@ import { COLORS, SHADOW } from "../../constants/theme";
 
 type Method = "phone" | "email";
 type Step = 1 | 2 | 3 | 4;
-type PhoneSection = "A" | "B" | "C";
 
 type Errors = Partial<Record<"contact" | "name" | "code", string>>;
 
-const PROFILE_KEY = "profileData_v1";
-
-type ProfileData = {
-  name: string;
-  userId: string;
-  email: string;
-  phone: string;
-  imageUri: string | null;
-};
-
-const DEFAULT_PROFILE: ProfileData = {
-  name: "보호자",
-  userId: "admin",
+const DEMO = {
+  phoneDigits: "01012345678",
   email: "stt@naver.com",
-  phone: "010-0000-0000",
-  imageUri: null,
-};
-
-const DEMO_CODE = "123456";
-
-function PhoneVisualSlot({
-  max,
-  baseText,
-  digits,
-  digitW,
-  showCursor,
-  cursorIndex,
-  onPress,
-}: {
-  max: number;
-  baseText: string;
-  digits: string;
-  digitW: number;
-  showCursor: boolean;
-  cursorIndex: number;
-  onPress: () => void;
-}) {
-  const len = Math.min(digits.length, max);
-  const shownBase = baseText.slice(0, max);
-  const slotWidth = digitW * max;
-  const safeCursorIndex = Math.max(0, Math.min(cursorIndex, max));
-
-  return (
-    <Pressable onPress={onPress} style={[styles.slotWrap, { width: slotWidth, height: 24 }]}>
-      <View style={styles.slotRow} pointerEvents="none">
-        {shownBase.split("").map((ch, i) => (
-          <Text
-            key={`b-${i}`}
-            style={[styles.slotBaseChar, { width: digitW }, i < len && styles.charTransparent]}
-          >
-            {ch}
-          </Text>
-        ))}
-      </View>
-
-      <View style={[styles.slotRow, styles.slotOverlay]} pointerEvents="none">
-        {digits
-          .padEnd(max, " ")
-          .slice(0, max)
-          .split("")
-          .map((ch, i) => (
-            <Text key={`t-${i}`} style={[styles.slotTopChar, { width: digitW }]}>
-              {ch}
-            </Text>
-          ))}
-      </View>
-
-      {showCursor && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.slotCursor,
-            {
-              left: safeCursorIndex * digitW - 1,
-            },
-          ]}
-        />
-      )}
-    </Pressable>
-  );
-}
+  name: "admin",
+  code: "123456",
+  foundId: "admin",
+} as const;
 
 export default function FindIdScreen() {
   const router = useRouter();
@@ -110,63 +34,23 @@ export default function FindIdScreen() {
   const [step, setStep] = useState<Step>(1);
   const [method, setMethod] = useState<Method>("phone");
 
-  const [savedProfile, setSavedProfile] = useState<ProfileData>(DEFAULT_PROFILE);
-
-  // Step1
   const [email, setEmail] = useState("");
-  const [phoneA, setPhoneA] = useState("");
-  const [phoneB, setPhoneB] = useState("");
-  const [phoneC, setPhoneC] = useState("");
-  const phoneDigits = useMemo(() => `${phoneA}${phoneB}${phoneC}`, [phoneA, phoneB, phoneC]);
+  const [phoneDigits, setPhoneDigits] = useState("");
 
-  // Step2
   const [name, setName] = useState("");
-
-  // Step3
   const [code, setCode] = useState("");
 
   const [errors, setErrors] = useState<Errors>({});
 
-  // refs
   const phoneInputRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
   const nameRef = useRef<TextInput>(null);
   const codeRef = useRef<TextInput>(null);
 
-  // scroll
   const scrollRef = useRef<ScrollView>(null);
   const [yContact, setYContact] = useState(0);
   const [yName, setYName] = useState(0);
   const [yCode, setYCode] = useState(0);
-
-  // visual measure
-  const [digitW, setDigitW] = useState(9);
-
-  // active section
-  const [activePhoneSection, setActivePhoneSection] = useState<PhoneSection>("A");
-  const [phoneFocused, setPhoneFocused] = useState(false);
-
-  const A_BASE = "010";
-  const B_BASE = "0000";
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(PROFILE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved) as Partial<ProfileData>;
-          setSavedProfile({
-            ...DEFAULT_PROFILE,
-            ...parsed,
-            phone: parsed.phone ?? DEFAULT_PROFILE.phone,
-            imageUri: parsed.imageUri ?? null,
-          });
-        }
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
 
   const scrollToY = (y: number) => {
     requestAnimationFrame(() => {
@@ -217,15 +101,12 @@ export default function FindIdScreen() {
     const next: Errors = {};
 
     if (method === "phone") {
-      const savedPhoneDigits = (savedProfile.phone ?? "").replace(/[^0-9]/g, "");
-      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리만 입력 가능합니다";
-      else if (phoneDigits !== savedPhoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
+      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리로 입력해주세요";
+      else if (phoneDigits !== DEMO.phoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
     } else {
-      const v = email.trim().toLowerCase();
-      const savedEmail = (savedProfile.email ?? "").trim().toLowerCase();
-
+      const v = email.trim();
       if (!v) next.contact = "이메일을 입력해주세요";
-      else if (v !== savedEmail) next.contact = "가입 정보와 일치하지 않습니다";
+      else if (v !== DEMO.email) next.contact = "가입 정보와 일치하지 않습니다";
     }
 
     setErrors(next);
@@ -235,10 +116,9 @@ export default function FindIdScreen() {
   const validateStep2 = () => {
     const next: Errors = {};
     const v = name.trim();
-    const savedName = (savedProfile.name ?? "").trim();
 
     if (!v) next.name = "이름 또는 단체명을 입력해주세요";
-    else if (v !== savedName) next.name = "가입 정보와 일치하지 않습니다";
+    else if (v !== DEMO.name) next.name = "가입 정보와 일치하지 않습니다";
 
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -247,8 +127,10 @@ export default function FindIdScreen() {
   const validateStep3 = () => {
     const next: Errors = {};
     const v = code.trim();
+
     if (v.length !== 6) next.code = "인증코드 6자리를 입력해주세요";
-    else if (v !== DEMO_CODE) next.code = "인증코드가 올바르지 않습니다";
+    else if (v !== DEMO.code) next.code = "인증코드가 올바르지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -260,112 +142,50 @@ export default function FindIdScreen() {
       setStep(2);
       return;
     }
+
     if (step === 2) {
       if (!validateStep2()) return;
       shouldAutoFocusRef.current = "step3";
       setStep(3);
       return;
     }
+
     if (step === 3) {
       if (!validateStep3()) return;
       setStep(4);
-      return;
     }
   };
 
+  const headerTitle = step === 4 ? "아이디 찾기 완료" : "아이디 찾기";
+
   const HERO_TEXT = useMemo(() => {
-    if (step === 1) return { title: "전화번호 또는 이메일", sub: "전화번호 또는 이메일을 입력하세요" };
-    if (step === 2) return { title: "이름 또는 단체명", sub: "이름 또는 단체명을 입력하세요" };
-    if (step === 3) return { title: "인증코드", sub: "전송된 6자리 인증코드를 입력하세요" };
+    if (step === 1) {
+      return { title: "전화번호 또는 이메일", sub: "전화번호 또는 이메일을 입력하세요" };
+    }
+    if (step === 2) {
+      return { title: "이름 또는 단체명", sub: "이름 또는 단체명을 입력하세요" };
+    }
+    if (step === 3) {
+      return { title: "인증코드", sub: "전송된 6자리 인증코드를 입력하세요" };
+    }
     return { title: "완료", sub: "" };
   }, [step]);
 
-  const focusPhone = (section?: PhoneSection) => {
-    const nextSection = section ?? activePhoneSection;
-    setActivePhoneSection(nextSection);
-    setTimeout(() => {
-      phoneInputRef.current?.focus();
-      scrollToY(yContact);
-    }, 0);
-  };
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
 
-  const cursorIndexA = phoneA.length;
-  const cursorIndexB = phoneB.length;
-  const cursorIndexC = phoneC.length;
+  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+    const shown = value || placeholder;
+    const isPlaceholder = value.length === 0;
 
-  const appendDigit = (d: string) => {
-    if (activePhoneSection === "A") {
-      if (phoneA.length < 3) {
-        setPhoneA((prev) => (prev + d).slice(0, 3));
-        return;
-      }
-
-      setActivePhoneSection("B");
-      setPhoneB((prev) => (prev + d).slice(0, 4));
-      return;
-    }
-
-    if (activePhoneSection === "B") {
-      if (phoneB.length < 4) {
-        setPhoneB((prev) => (prev + d).slice(0, 4));
-        return;
-      }
-
-      setActivePhoneSection("C");
-      setPhoneC((prev) => (prev + d).slice(0, 4));
-      return;
-    }
-
-    if (activePhoneSection === "C") {
-      if (phoneC.length < 4) {
-        setPhoneC((prev) => (prev + d).slice(0, 4));
-      }
-    }
-  };
-
-  const removeDigit = () => {
-    if (activePhoneSection === "C") {
-      if (phoneC.length > 0) {
-        setPhoneC((prev) => prev.slice(0, -1));
-        return;
-      }
-
-      setActivePhoneSection("B");
-      return;
-    }
-
-    if (activePhoneSection === "B") {
-      if (phoneB.length > 0) {
-        setPhoneB((prev) => prev.slice(0, -1));
-        return;
-      }
-
-      setActivePhoneSection("A");
-      return;
-    }
-
-    if (activePhoneSection === "A") {
-      if (phoneA.length > 0) {
-        setPhoneA((prev) => prev.slice(0, -1));
-      }
-    }
-  };
-
-  const onPhoneKeyPress = (key: string) => {
-    clearError("contact");
-
-    if (key === "Backspace") {
-      removeDigit();
-      return;
-    }
-
-    if (!/^[0-9]$/.test(key)) return;
-    appendDigit(key);
-  };
-
-  const handlePhonePress = (section?: PhoneSection) => {
-    const target = section ?? activePhoneSection;
-    focusPhone(target);
+    return (
+      <View style={[styles.phoneCell, { width }]}>
+        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+          {shown}
+        </Text>
+      </View>
+    );
   };
 
   return (
@@ -375,7 +195,7 @@ export default function FindIdScreen() {
           <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
             <Ionicons name="arrow-back" size={22} color="#111827" />
           </Pressable>
-          <Text style={styles.topTitle}>{step === 4 ? "아이디 찾기 완료" : "아이디 찾기"}</Text>
+          <Text style={styles.topTitle}>{headerTitle}</Text>
           <View style={{ width: 44 }} />
         </View>
       </SafeAreaView>
@@ -392,18 +212,6 @@ export default function FindIdScreen() {
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.measureWrap}>
-            <Text
-              onLayout={(e) => {
-                const { width } = e.nativeEvent.layout;
-                if (width > 0) setDigitW(width);
-              }}
-              style={styles.measureText}
-            >
-              0
-            </Text>
-          </View>
-
           {step !== 4 ? (
             <View style={styles.hero}>
               <View style={styles.logoCircle}>
@@ -431,7 +239,7 @@ export default function FindIdScreen() {
                       onPress={() => {
                         setMethod("phone");
                         clearError("contact");
-                        handlePhonePress(activePhoneSection);
+                        setTimeout(() => phoneInputRef.current?.focus(), 80);
                       }}
                     >
                       <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
@@ -459,58 +267,32 @@ export default function FindIdScreen() {
                   {method === "phone" ? (
                     <Pressable
                       style={styles.phoneBox}
-                      onPress={() => handlePhonePress(activePhoneSection)}
+                      onPress={() => {
+                        phoneInputRef.current?.focus();
+                        scrollToY(yContact);
+                      }}
                     >
-                      <PhoneVisualSlot
-                        max={3}
-                        baseText={A_BASE}
-                        digits={phoneA}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "A"}
-                        cursorIndex={cursorIndexA}
-                        onPress={() => handlePhonePress("A")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={phoneB}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "B"}
-                        cursorIndex={cursorIndexB}
-                        onPress={() => handlePhonePress("B")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={phoneC}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "C"}
-                        cursorIndex={cursorIndexC}
-                        onPress={() => handlePhonePress("C")}
-                      />
+                      <View style={styles.phoneDisplayRow}>
+                        {renderPhoneCell(phoneA, "000", 78)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneB, "0000", 92)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneC, "0000", 92)}
+                      </View>
 
                       <TextInput
                         ref={phoneInputRef}
                         style={styles.hiddenPhoneInput}
-                        value=""
-                        onChangeText={() => {}}
-                        onKeyPress={({ nativeEvent }) => onPhoneKeyPress(nativeEvent.key)}
-                        onFocus={() => {
-                          setPhoneFocused(true);
-                          scrollToY(yContact);
+                        value={phoneDigits}
+                        onChangeText={(t) => {
+                          setPhoneDigits(onlyDigits(t, 11));
+                          clearError("contact");
                         }}
-                        onBlur={() => setPhoneFocused(false)}
+                        onFocus={() => scrollToY(yContact)}
                         keyboardType="number-pad"
+                        maxLength={11}
+                        returnKeyType="done"
                         caretHidden
-                        contextMenuHidden
-                        autoCorrect={false}
-                        autoCapitalize="none"
                       />
                     </Pressable>
                   ) : (
@@ -607,7 +389,7 @@ export default function FindIdScreen() {
               <View>
                 <View style={styles.resultCard}>
                   <Text style={styles.resultTitle}>찾은 아이디</Text>
-                  <Text style={styles.resultId}>{savedProfile.userId}</Text>
+                  <Text style={styles.resultId}>{DEMO.foundId}</Text>
                 </View>
 
                 <Pressable
@@ -642,20 +424,6 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  measureWrap: {
-    position: "absolute",
-    opacity: 0,
-    left: -9999,
-    top: -9999,
-  },
-  measureText: {
-    fontSize: 15,
-    fontWeight: "800",
-    letterSpacing: 0,
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-  },
-
   hero: { alignItems: "center", marginTop: 18, marginBottom: 14 },
   logoCircle: {
     width: 68,
@@ -668,7 +436,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   heroTitle: { fontSize: 18, fontWeight: "900", color: "#111827", marginTop: 9 },
-  heroSub: { marginTop: 4, fontSize: 13, fontWeight: "700", color: "rgba(17,24,39,0.55)", textAlign: "center" },
+  heroSub: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "700",
+    color: "rgba(17,24,39,0.55)",
+    textAlign: "center",
+  },
 
   heroDone: { alignItems: "center", marginTop: 22, marginBottom: 14 },
   doneTitle: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#111827" },
@@ -728,70 +502,48 @@ const styles = StyleSheet.create({
   phoneBox: {
     height: 54,
     paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#fff",
     position: "relative",
   },
 
+  phoneDisplayRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  phoneCell: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  phoneCellText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+  },
+
+  phonePlaceholder: {
+    color: "#9CA3AF",
+  },
+
   phoneHyphen: {
-    width: 58,
+    width: 10,
     textAlign: "center",
     fontSize: 14,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
   },
 
-  slotWrap: {
-    position: "relative",
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  slotRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-start",
-  },
-  slotOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-  },
-  slotBaseChar: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#9CA3AF",
-    letterSpacing: 0,
-    textAlign: "center",
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-  },
-  slotTopChar: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    letterSpacing: 0,
-    textAlign: "center",
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-  },
-  charTransparent: { opacity: 0 },
-
-  slotCursor: {
-    position: "absolute",
-    top: 2,
-    width: 2,
-    height: 19,
-    borderRadius: 1,
-    backgroundColor: COLORS.primary,
-  },
-
   hiddenPhoneInput: {
     position: "absolute",
     opacity: 0,
-    width: 1,
-    height: 1,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 
   emailBox: {
@@ -855,16 +607,17 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     ...SHADOW.card,
   },
-  resultIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.success ?? "#22C55E",
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 10,
+  resultTitle: {
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "900",
+    color: "rgba(0, 0, 0, 0.55)",
   },
-  resultTitle: { textAlign: "center", fontSize: 16, fontWeight: "900", color: "rgba(0, 0, 0, 0.55)" },
-  resultId: { textAlign: "center", marginTop: 10, fontSize: 26, fontWeight: "900", color: "#111827" },
+  resultId: {
+    textAlign: "center",
+    marginTop: 10,
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111827",
+  },
 });

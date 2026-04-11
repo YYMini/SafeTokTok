@@ -17,7 +17,7 @@ type Props = {
 export default function Header({
   title = "안심톡톡",
   roleLabel,
-  showLogout = true,
+  showLogout = false,
   onPressSettings,
   onPressLogout,
   onPressRole,
@@ -42,14 +42,14 @@ export default function Header({
             {profileImageUri ? (
               <Image source={{ uri: profileImageUri }} style={styles.roleAvatar} />
             ) : (
-              <Ionicons name="person-outline" size={16} color="#fff" />
+              <Ionicons name="person-outline" size={16} color="#D1D5DB" />
             )}
             <Text style={styles.roleText}>{roleLabel}</Text>
           </Pressable>
         )}
 
         <Pressable onPress={onPressSettings} style={styles.iconBtn} hitSlop={10}>
-          <Ionicons name="settings-outline" size={20} color="#fff" />
+          <Ionicons name="settings-outline" size={20} color="#D1D5DB" />
         </Pressable>
 
         {showLogout && (
@@ -82,11 +82,11 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: "#fff",
+    backgroundColor: "#D1D5DB",
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 18, fontWeight: "900", color: "#fff" },
+  title: { fontSize: 18, fontWeight: "900", color: "#D1D5DB" },
 
   rolePill: {
     flexDirection: "row",
@@ -95,9 +95,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 34,
     borderRadius: RADIUS.pill,
-    backgroundColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.14)",
   },
-  roleText: { color: "#fff", fontWeight: "900" },
+  roleText: { color: "#D1D5DB", fontWeight: "900" },
 
   roleAvatar: {
     width: 20,
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.14)",
   },
   logoutBtn: { backgroundColor: "rgba(239,68,68,0.95)" },
 });
