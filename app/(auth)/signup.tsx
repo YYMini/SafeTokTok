@@ -1,61 +1,65 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
-  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TextInputKeyPressEventData,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS, SHADOW } from "../../constants/theme";
 
-type Errors = Partial<Record<"userId" | "pw" | "pw2" | "name" | "phone" | "email" | "agree", string>>;
+type Role = "user" | "guardian";
+
+type Errors = Partial<
+  Record<"role" | "userId" | "pw" | "pw2" | "name" | "phone" | "email" | "agree", string>
+>;
+
+const STORAGE_KEYS = {
+  accountId: "authAccountId",
+  accountPw: "authAccountPw",
+  accountRole: "authAccountRole",
+  profile: "profileData_v1",
+  targets: "linkedTargets_v1",
+  remember: "rememberMe",
+  savedId: "savedLoginId",
+  savedPw: "savedLoginPw",
+} as const;
 
 export default function SignupScreen() {
   const router = useRouter();
 
-  // ✅ 입력값 상태
+  const [role, setRole] = useState<Role | null>("guardian");
+
   const [userId, setUserId] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
 
-  // ✅ 전화번호 (3-4-4 분리 저장, UI는 한 박스)
-  const [phoneA, setPhoneA] = useState(""); // 3
-  const [phoneB, setPhoneB] = useState(""); // 4
-  const [phoneC, setPhoneC] = useState(""); // 4
+  const [phoneDigits, setPhoneDigits] = useState("");
 
-  const phoneRefA = useRef<TextInput>(null);
-  const phoneRefB = useRef<TextInput>(null);
-  const phoneRefC = useRef<TextInput>(null);
-
-  const phoneDigits = useMemo(() => `${phoneA}${phoneB}${phoneC}`, [phoneA, phoneB, phoneC]);
+  const phoneInputRef = useRef<TextInput>(null);
 
   const [agree1, setAgree1] = useState(false);
   const [agree2, setAgree2] = useState(false);
   const [pwShow, setPwShow] = useState(false);
   const [pw2Show, setPw2Show] = useState(false);
 
-  // ✅ 에러 상태
   const [errors, setErrors] = useState<Errors>({});
 
   const canSubmit = agree1 && agree2;
 
-  // ====== 규칙 ======
   const ID_REGEX = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
   const PW_REGEX = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
   const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  const scrollRef = useRef<ScrollView>(null);
 
   const clearFieldError = (key: keyof Errors) => {
     setErrors((prev) => {
@@ -66,6 +70,8 @@ export default function SignupScreen() {
     });
   };
 
+  const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
+
   const validateAll = () => {
     const next: Errors = {};
 
@@ -74,6 +80,8 @@ export default function SignupScreen() {
     const trimmedPw2 = pw2;
     const trimmedName = name.trim();
     const trimmedEmail = email.trim();
+
+    if (!role) next.role = "역할을 선택해주세요";
 
     if (!trimmedId) next.userId = "아이디를 입력해주세요";
     else if (trimmedId.length < 4 || trimmedId.length > 20) next.userId = "아이디는 4~20자 이내로 입력해주세요";
@@ -88,7 +96,6 @@ export default function SignupScreen() {
 
     if (!trimmedName) next.name = "이름을 입력해주세요";
 
-    // ✅ 전화번호: 무조건 11자리(3-4-4)
     if (!phoneDigits) next.phone = "전화번호를 입력해주세요";
     else if (phoneDigits.length !== 11) next.phone = "전화번호는 11자리(010-0000-0000)만 가능합니다";
 
@@ -100,31 +107,140 @@ export default function SignupScreen() {
     return Object.keys(next).length === 0;
   };
 
-  const onSubmit = () => {
-    const ok = validateAll();
-    if (!ok) return;
-    router.replace("/(auth)/login");
+  const checkDuplicate = async () => {
+    try {
+      const savedId = await AsyncStorage.getItem(STORAGE_KEYS.accountId);
+      const savedPw = await AsyncStorage.getItem(STORAGE_KEYS.accountPw);
+      const savedProfileRaw = await AsyncStorage.getItem(STORAGE_KEYS.profile);
+
+      if (!savedId && !savedPw && !savedProfileRaw) {
+        return true;
+      }
+
+      let savedProfile: {
+        name?: string;
+        userId?: string;
+        email?: string;
+        phone?: string;
+        role?: Role;
+        roleLabel?: string;
+      } | null = null;
+
+      if (savedProfileRaw) {
+        savedProfile = JSON.parse(savedProfileRaw);
+      }
+
+      const trimmedId = userId.trim();
+      const trimmedName = name.trim();
+      const trimmedEmail = email.trim();
+      const currentPhone = phoneDigits;
+      const savedPhoneDigits = savedProfile?.phone?.replace(/-/g, "") ?? "";
+
+      const DUP_MSG = "이미 등록된 회원 정보입니다";
+
+      let duplicateFound = false;
+      const nextErrors: Errors = {};
+
+      if (savedId && savedId === trimmedId) {
+        nextErrors.userId = DUP_MSG;
+        duplicateFound = true;
+      }
+
+      if (savedPw && savedPw === pw) {
+        nextErrors.pw = DUP_MSG;
+        duplicateFound = true;
+      }
+
+      if (savedProfile?.name && savedProfile.name === trimmedName) {
+        nextErrors.name = DUP_MSG;
+        duplicateFound = true;
+      }
+
+      if (trimmedEmail && savedProfile?.email === trimmedEmail) {
+        nextErrors.email = DUP_MSG;
+        duplicateFound = true;
+      }
+
+      if (savedPhoneDigits && savedPhoneDigits === currentPhone) {
+        nextErrors.phone = DUP_MSG;
+        duplicateFound = true;
+      }
+
+      if (duplicateFound) {
+        setErrors((prev) => ({
+          ...prev,
+          ...nextErrors,
+        }));
+        return false;
+      }
+
+      return true;
+    } catch {
+      setErrors((prev) => ({
+        ...prev,
+        agree: "회원 정보 확인 중 오류가 발생했습니다",
+      }));
+      return false;
+    }
   };
 
-  // ✅ 숫자만 + 길이 제한
-  const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
+  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+    const shown = value || placeholder;
+    const isPlaceholder = value.length === 0;
 
-  // ✅ Backspace로 이전 칸 이동
-  const onKeyPressPhone =
-    (which: "A" | "B" | "C") => (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-      if (e.nativeEvent.key !== "Backspace") return;
+    return (
+      <View style={[styles.phoneCell, { width }]}>
+        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+          {shown}
+        </Text>
+      </View>
+    );
+  };
 
-      if (which === "B" && phoneB.length === 0) {
-        phoneRefA.current?.focus();
-      }
-      if (which === "C" && phoneC.length === 0) {
-        phoneRefB.current?.focus();
-      }
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
+
+  const onSubmit = async () => {
+    const ok = validateAll();
+    if (!ok || !role) return;
+
+    const duplicateOk = await checkDuplicate();
+    if (!duplicateOk) return;
+
+    const phoneFormatted = `${phoneA}-${phoneB}-${phoneC}`;
+
+    const profilePayload = {
+      name: name.trim(),
+      userId: userId.trim(),
+      email: email.trim(),
+      phone: phoneFormatted,
+      imageUri: null,
+      role,
+      roleLabel: role === "guardian" ? "보호자" : "사용자",
     };
+
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.accountId, userId.trim());
+      await AsyncStorage.setItem(STORAGE_KEYS.accountPw, pw);
+      await AsyncStorage.setItem(STORAGE_KEYS.accountRole, role);
+      await AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(profilePayload));
+
+      await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
+      await AsyncStorage.removeItem(STORAGE_KEYS.savedId);
+      await AsyncStorage.removeItem(STORAGE_KEYS.savedPw);
+
+      router.replace("/(auth)/login");
+    } catch {
+      setErrors((prev) => ({
+        ...prev,
+        agree: "회원가입 정보를 저장하지 못했습니다",
+      }));
+    }
+  };
 
   return (
     <View style={{ flex: 1 }}>
-      {/* ✅ 상단 잘림 방지: SafeArea */}
       <SafeAreaView edges={["top"]} style={{ backgroundColor: "#fff" }}>
         <View style={styles.topBar}>
           <Pressable style={styles.backBtn} onPress={() => router.back()}>
@@ -135,7 +251,6 @@ export default function SignupScreen() {
         </View>
       </SafeAreaView>
 
-      {/* ✅ 키보드가 입력란 가리는 문제 해결 */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -143,7 +258,6 @@ export default function SignupScreen() {
       >
         <LinearGradient colors={[COLORS.bgTop, COLORS.bgBottom]} style={{ flex: 1 }}>
           <ScrollView
-            ref={scrollRef}
             contentContainerStyle={styles.body}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -153,7 +267,46 @@ export default function SignupScreen() {
               <Ionicons name="shield-checkmark" size={28} color={COLORS.primary} />
             </View>
 
-            {/* 아이디 */}
+            <Text style={styles.label}>
+              역할 선택 <Text style={{ color: "#EF4444" }}>*</Text>
+            </Text>
+            <View style={styles.roleRow}>
+              <Pressable
+                style={[styles.roleBtn, role === "guardian" && styles.roleBtnOn]}
+                onPress={() => {
+                  setRole("guardian");
+                  clearFieldError("role");
+                }}
+              >
+                <Ionicons
+                  name="people-outline"
+                  size={18}
+                  color={role === "guardian" ? "#fff" : "#6B7280"}
+                />
+                <Text style={[styles.roleBtnText, role === "guardian" && styles.roleBtnTextOn]}>
+                  보호자
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.roleBtn, role === "user" && styles.roleBtnOn]}
+                onPress={() => {
+                  setRole("user");
+                  clearFieldError("role");
+                }}
+              >
+                <Ionicons
+                  name="person-outline"
+                  size={18}
+                  color={role === "user" ? "#fff" : "#6B7280"}
+                />
+                <Text style={[styles.roleBtnText, role === "user" && styles.roleBtnTextOn]}>
+                  사용자
+                </Text>
+              </Pressable>
+            </View>
+            {!!errors.role && <Text style={styles.errorText}>{errors.role}</Text>}
+
             <Text style={styles.label}>
               아이디 <Text style={{ color: "#EF4444" }}>*</Text>
             </Text>
@@ -172,7 +325,6 @@ export default function SignupScreen() {
             />
             {!!errors.userId && <Text style={styles.errorText}>{errors.userId}</Text>}
 
-            {/* 비밀번호 */}
             <Text style={styles.label}>
               비밀번호 <Text style={{ color: "#EF4444" }}>*</Text>
             </Text>
@@ -200,7 +352,6 @@ export default function SignupScreen() {
             </View>
             {!!errors.pw && <Text style={styles.errorText}>{errors.pw}</Text>}
 
-            {/* 비밀번호 확인 */}
             <Text style={styles.label}>
               비밀번호 확인 <Text style={{ color: "#EF4444" }}>*</Text>
             </Text>
@@ -228,7 +379,6 @@ export default function SignupScreen() {
             </View>
             {!!errors.pw2 && <Text style={styles.errorText}>{errors.pw2}</Text>}
 
-            {/* 이름 */}
             <Text style={styles.label}>
               이름 <Text style={{ color: "#EF4444" }}>*</Text>
             </Text>
@@ -244,73 +394,37 @@ export default function SignupScreen() {
             />
             {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
 
-            {/* ✅ 전화번호 */}
             <Text style={styles.label}>
               전화번호 <Text style={{ color: "#EF4444" }}>*</Text>
             </Text>
-
-            <View style={styles.phoneBox}>
-              <TextInput
-                ref={phoneRefA}
-                style={styles.phoneInputA}
-                value={phoneA}
-                onChangeText={(t) => {
-                  const v = onlyDigits(t, 3);
-                  setPhoneA(v);
-                  clearFieldError("phone");
-                  if (v.length === 3) phoneRefB.current?.focus();
-                }}
-                keyboardType="number-pad"
-                maxLength={3}
-                placeholder="010"
-                placeholderTextColor="#9CA3AF"
-              />
-
-              <View style={styles.phoneHyphenWrap}>
+            <Pressable
+              style={styles.phoneBox}
+              onPress={() => phoneInputRef.current?.focus()}
+            >
+              <View style={styles.phoneDisplayRow}>
+                {renderPhoneCell(phoneA, "000", 72)}
                 <Text style={styles.phoneHyphen}>-</Text>
+                {renderPhoneCell(phoneB, "0000", 88)}
+                <Text style={styles.phoneHyphen}>-</Text>
+                {renderPhoneCell(phoneC, "0000", 88)}
               </View>
 
               <TextInput
-                ref={phoneRefB}
-                style={styles.phoneInputB}
-                value={phoneB}
+                ref={phoneInputRef}
+                style={styles.hiddenPhoneInput}
+                value={phoneDigits}
                 onChangeText={(t) => {
-                  const v = onlyDigits(t, 4);
-                  setPhoneB(v);
-                  clearFieldError("phone");
-                  if (v.length === 4) phoneRefC.current?.focus();
-                }}
-                onKeyPress={onKeyPressPhone("B")}
-                keyboardType="number-pad"
-                maxLength={4}
-                placeholder="0000"
-                placeholderTextColor="#9CA3AF"
-              />
-
-              <View style={styles.phoneHyphenWrap}>
-                <Text style={styles.phoneHyphen}>-</Text>
-              </View>
-
-              <TextInput
-                ref={phoneRefC}
-                style={styles.phoneInputC}
-                value={phoneC}
-                onChangeText={(t) => {
-                  const v = onlyDigits(t, 4);
-                  setPhoneC(v);
+                  setPhoneDigits(onlyDigits(t, 11));
                   clearFieldError("phone");
                 }}
-                onKeyPress={onKeyPressPhone("C")}
                 keyboardType="number-pad"
-                maxLength={4}
-                placeholder="0000"
-                placeholderTextColor="#9CA3AF"
+                maxLength={11}
+                returnKeyType="done"
+                caretHidden
               />
-            </View>
-
+            </Pressable>
             {!!errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
 
-            {/* 이메일(선택) */}
             <Text style={styles.label}>이메일</Text>
             <TextInput
               style={styles.input}
@@ -328,7 +442,6 @@ export default function SignupScreen() {
             />
             {!!errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
 
-            {/* 약관 동의 */}
             <Pressable
               style={styles.agreeRow}
               onPress={() => {
@@ -357,7 +470,6 @@ export default function SignupScreen() {
 
             {!!errors.agree && <Text style={styles.errorText}>{errors.agree}</Text>}
 
-            {/* 가입 버튼 */}
             <Pressable
               style={[styles.primaryBtn, !canSubmit && { opacity: 0.45 }]}
               disabled={!canSubmit}
@@ -402,6 +514,36 @@ const styles = StyleSheet.create({
   },
 
   label: { fontSize: 14, fontWeight: "800", color: "#374151", marginTop: 10, marginBottom: 8 },
+
+  roleRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 12,
+  },
+  roleBtn: {
+    flex: 1,
+    height: 52,
+    borderRadius: 10,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  roleBtnOn: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  roleBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#4B5563",
+  },
+  roleBtnTextOn: {
+    color: "#fff",
+  },
 
   input: {
     height: 52,
@@ -450,11 +592,6 @@ const styles = StyleSheet.create({
     color: "#EF4444",
   },
 
-  // =========================
-  // ✅✅ 여기부터 "전화번호 스타일"만 수정
-  // =========================
-
-  // 한 박스
   phoneBox: {
     height: 52,
     backgroundColor: "#F3F4F6",
@@ -463,54 +600,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
     marginBottom: 12,
-
-    flexDirection: "row",
-    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
   },
-
-  // 하이픈 칸(고정 폭) → 가운데 정렬
-  phoneHyphenWrap: {
-    width: 18,
+  phoneDisplayRow: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
   },
+  phoneCell: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  phoneCellText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+    textAlign: "center",
+  },
+  phonePlaceholder: {
+    color: "#9CA3AF",
+  },
   phoneHyphen: {
+    marginHorizontal: 2,
     fontSize: 14,
     fontWeight: "800",
     color: "#6B7280",
-    lineHeight: 18,
-    textAlign: "center",
   },
-
-  // ✅ 3칸을 "동일 폭"으로 보이게: 전부 flex:1
-  phoneInputA: {
-    flex: 1,
-    height: 52,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    ...(Platform.OS === "android" ? { includeFontPadding: false, textAlignVertical: "center" as const } : {}),
-  },
-  phoneInputB: {
-    flex: 1,
-    height: 52,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    ...(Platform.OS === "android" ? { includeFontPadding: false, textAlignVertical: "center" as const } : {}),
-  },
-  phoneInputC: {
-    flex: 1,
-    height: 52,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    ...(Platform.OS === "android" ? { includeFontPadding: false, textAlignVertical: "center" as const } : {}),
+  hiddenPhoneInput: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 });

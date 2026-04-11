@@ -1,4 +1,3 @@
-// app/(auth)/login.tsx
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,12 +17,13 @@ import {
 import { COLORS, SHADOW } from "../../constants/theme";
 import { useAuth } from "../_layout";
 
-
 const STORAGE_KEYS = {
   remember: "rememberMe",
   savedId: "savedLoginId",
   savedPw: "savedLoginPw",
   isLoggedIn: "isLoggedIn",
+  accountId: "authAccountId",
+  accountPw: "authAccountPw",
 } as const;
 
 type ToastType = "error" | "success" | "none";
@@ -37,12 +37,10 @@ export default function LoginScreen() {
   const [showPw, setShowPw] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  // ✅ 토스트(상단 배너)
   const [toastVisible, setToastVisible] = useState(false);
   const [toastText, setToastText] = useState("");
   const [toastType, setToastType] = useState<ToastType>("none");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 
   const toastAnim = useRef(new Animated.Value(0)).current;
 
@@ -106,7 +104,6 @@ export default function LoginScreen() {
     };
   }, []);
 
-  // ✅ 입력 시작/포커스 시 토스트 즉시 숨김
   const onFocusInput = () => {
     if (toastVisible) dismissToast();
   };
@@ -121,20 +118,33 @@ export default function LoginScreen() {
   const onSubmit = async () => {
     Keyboard.dismiss();
 
-    // 1) 둘 다 없거나 하나만 있는 경우
     if (!normalized.id || !normalized.pw) {
       showToast("error", "아이디 및 비밀번호를 입력해주세요");
       return;
     }
 
-    // 2) 틀린 경우 (데모: admin/admin)
-    const ok = normalized.id === "admin" && normalized.pw === "admin";
+    let accountId = "";
+    let accountPw = "";
+
+    try {
+      accountId = (await AsyncStorage.getItem(STORAGE_KEYS.accountId)) ?? "";
+      accountPw = (await AsyncStorage.getItem(STORAGE_KEYS.accountPw)) ?? "";
+    } catch {
+      // ignore
+    }
+
+    // 회원가입된 계정이 없으면 로그인 불가
+    if (!accountId || !accountPw) {
+      showToast("error", "회원가입 후 로그인해주세요");
+      return;
+    }
+
+    const ok = normalized.id === accountId && normalized.pw === accountPw;
     if (!ok) {
       showToast("error", "아이디 및 비밀번호가 틀렸습니다");
       return;
     }
 
-    // ✅ rememberMe 처리
     try {
       if (rememberMe) {
         await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
@@ -150,7 +160,6 @@ export default function LoginScreen() {
       // ignore
     }
 
-    // 로그인 처리 + 이동
     await login();
     router.replace("/(tabs)");
   };
@@ -363,9 +372,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  pwRow: { position: "relative", justifyContent: "center", marginTop: -1,marginBottom:-1},
+  pwRow: { position: "relative", justifyContent: "center", marginTop: -1, marginBottom: -1 },
   pwInput: { paddingRight: 48 },
-  eyeBtn: { position: "absolute", right: 12, height: 54, justifyContent: "center", top:0},
+  eyeBtn: { position: "absolute", right: 12, height: 54, justifyContent: "center", top: 0 },
 
   optionsRow: {
     marginTop: 2,
@@ -387,14 +396,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginLeft: 5,
     marginRight: -2,
-
     position: "relative",
   },
 
   checkboxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   rememberText: { fontSize: 14, fontWeight: "800", color: "#111827" },
 
-  findRow: { flexDirection: "row", alignItems: "center", marginRight:3 },
+  findRow: { flexDirection: "row", alignItems: "center", marginRight: 3 },
   findText: { fontSize: 12, fontWeight: "800", color: "rgba(17,24,39,0.55)" },
   divider: { fontSize: 12, fontWeight: "900", color: "rgba(17,24,39,0.25)", marginHorizontal: 6 },
 
@@ -405,11 +413,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     ...SHADOW.floating,
-    marginTop: 8
+    marginTop: 8,
   },
   loginBtnText: { color: "#fff", fontSize: 17, fontWeight: "900" },
 
-  signupBtn: { marginTop: 23, alignItems: "center", marginBottom: 5},
+  signupBtn: { marginTop: 23, alignItems: "center", marginBottom: 5 },
   signupText: { fontSize: 16, fontWeight: "900", color: "rgba(17,24,39,0.50)" },
 
   footer: { marginTop: 20, textAlign: "center", color: "rgba(17,24,39,0.35)", fontWeight: "700" },

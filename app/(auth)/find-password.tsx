@@ -1,5 +1,6 @@
 // app/(auth)/find-password.tsx
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -21,9 +22,14 @@ type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
 type Errors = Partial<Record<"userId" | "contact" | "name" | "code" | "pw" | "pw2", string>>;
 
+const AUTH_KEYS = {
+  accountId: "authAccountId",
+  accountPw: "authAccountPw",
+} as const;
+
 const DEMO = {
   userId: "admin",
-  phoneDigits: "01012345678", // 010-1234-5678
+  phoneDigits: "01012345678",
   email: "stt@naver.com",
   name: "admin",
   code: "123456",
@@ -35,23 +41,13 @@ export default function FindPasswordScreen() {
   const [step, setStep] = useState<Step>(1);
   const [method, setMethod] = useState<Method>("phone");
 
-  // Step1: ID
   const [userId, setUserId] = useState("");
+  const [email, setEmail] = useState("");
+  const [phoneDigits, setPhoneDigits] = useState("");
 
-  // Step2: phone/email
-  const [email, setEmail] = useState(""); // stt@naver.com를 직접 입력해야 통과
-  const [phoneA, setPhoneA] = useState(""); // 3
-  const [phoneB, setPhoneB] = useState(""); // 4
-  const [phoneC, setPhoneC] = useState(""); // 4
-  const phoneDigits = useMemo(() => `${phoneA}${phoneB}${phoneC}`, [phoneA, phoneB, phoneC]);
-
-  // Step3: name/org
   const [name, setName] = useState("");
-
-  // Step4: code
   const [code, setCode] = useState("");
 
-  // Step5: reset pw
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [pwShow, setPwShow] = useState(false);
@@ -59,21 +55,14 @@ export default function FindPasswordScreen() {
 
   const [errors, setErrors] = useState<Errors>({});
 
-  // refs
   const idRef = useRef<TextInput>(null);
-
-  const phoneRefA = useRef<TextInput>(null);
-  const phoneRefB = useRef<TextInput>(null);
-  const phoneRefC = useRef<TextInput>(null);
-
+  const phoneInputRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
   const nameRef = useRef<TextInput>(null);
   const codeRef = useRef<TextInput>(null);
-
   const pwRef = useRef<TextInput>(null);
   const pw2Ref = useRef<TextInput>(null);
 
-  // scroll
   const scrollRef = useRef<ScrollView>(null);
   const [yId, setYId] = useState(0);
   const [yContact, setYContact] = useState(0);
@@ -98,10 +87,6 @@ export default function FindPasswordScreen() {
 
   const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
 
-  /**
-   * ✅ 첫 진입 시 자동 focus 막아서 "키보드 자동 오픈" 방지
-   * ✅ step 전환(Next)으로 넘어간 경우에만 autofocus
-   */
   const didEnterRef = useRef(false);
   const shouldAutoFocusRef = useRef<null | "id" | "contactPhone" | "contactEmail" | "name" | "code" | "pw">(null);
 
@@ -111,7 +96,6 @@ export default function FindPasswordScreen() {
       return;
     }
 
-    // Step 1
     if (step === 1 && shouldAutoFocusRef.current === "id") {
       shouldAutoFocusRef.current = null;
       setTimeout(() => {
@@ -121,13 +105,12 @@ export default function FindPasswordScreen() {
       return;
     }
 
-    // Step 2
     if (step === 2) {
       const next = shouldAutoFocusRef.current;
       if (next === "contactPhone") {
         shouldAutoFocusRef.current = null;
         setTimeout(() => {
-          phoneRefA.current?.focus();
+          phoneInputRef.current?.focus();
           scrollToY(yContact);
         }, 60);
         return;
@@ -140,10 +123,9 @@ export default function FindPasswordScreen() {
         }, 60);
         return;
       }
-      return; // step2로 돌아와도 자동포커스 X
+      return;
     }
 
-    // Step 3
     if (step === 3 && shouldAutoFocusRef.current === "name") {
       shouldAutoFocusRef.current = null;
       setTimeout(() => {
@@ -153,7 +135,6 @@ export default function FindPasswordScreen() {
       return;
     }
 
-    // Step 4
     if (step === 4 && shouldAutoFocusRef.current === "code") {
       shouldAutoFocusRef.current = null;
       setTimeout(() => {
@@ -163,18 +144,15 @@ export default function FindPasswordScreen() {
       return;
     }
 
-    // Step 5
     if (step === 5 && shouldAutoFocusRef.current === "pw") {
       shouldAutoFocusRef.current = null;
       setTimeout(() => {
         pwRef.current?.focus();
         scrollToY(yPw);
       }, 60);
-      return;
     }
   }, [step, yId, yContact, yName, yCode, yPw]);
 
-  // ====== validation ======
   const validateStep1 = () => {
     const next: Errors = {};
     const v = userId.trim();
@@ -187,7 +165,7 @@ export default function FindPasswordScreen() {
   const validateStep2 = () => {
     const next: Errors = {};
     if (method === "phone") {
-      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리 이내로 입력해주세요";
+      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리로 입력해주세요";
       else if (phoneDigits !== DEMO.phoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
     } else {
       const v = email.trim();
@@ -231,58 +209,6 @@ export default function FindPasswordScreen() {
     return Object.keys(next).length === 0;
   };
 
-  const onNext = () => {
-    if (step === 1) {
-      if (!validateStep1()) return;
-      shouldAutoFocusRef.current = method === "phone" ? "contactPhone" : "contactEmail";
-      setStep(2);
-      return;
-    }
-    if (step === 2) {
-      if (!validateStep2()) return;
-      shouldAutoFocusRef.current = "name";
-      setStep(3);
-      return;
-    }
-    if (step === 3) {
-      if (!validateStep3()) return;
-      shouldAutoFocusRef.current = "code";
-      setStep(4);
-      return;
-    }
-    if (step === 4) {
-      if (!validateStep4()) return;
-      shouldAutoFocusRef.current = "pw";
-      setStep(5);
-      return;
-    }
-    if (step === 5) {
-      if (!validateStep5()) return;
-      setStep(6);
-      return;
-    }
-  };
-
-  const resetAll = () => {
-    setStep(1);
-    setErrors({});
-    setMethod("phone");
-
-    setUserId("");
-    setEmail("");
-    setPhoneA("");
-    setPhoneB("");
-    setPhoneC("");
-    setName("");
-    setCode("");
-    setPw("");
-    setPw2("");
-    setPwShow(false);
-    setPw2Show(false);
-
-    shouldAutoFocusRef.current = null;
-  };
-
   const headerTitle = step === 6 ? "비밀번호 재설정 완료" : "비밀번호 찾기";
 
   const HERO_TEXT = useMemo(() => {
@@ -294,8 +220,32 @@ export default function FindPasswordScreen() {
     return { title: "변경 완료", sub: "" };
   }, [step]);
 
-  // ✅ Step5 오류는 “확인 입력란 아래”에만 표시 (pw 에러도 여기로 모아서 보여줌)
   const step5Error = errors.pw2 || errors.pw;
+
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
+
+  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+    const shown = value || placeholder;
+    const isPlaceholder = value.length === 0;
+
+    return (
+      <View style={[styles.phoneCell, { width }]}>
+        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+          {shown}
+        </Text>
+      </View>
+    );
+  };
+
+  const saveNewPassword = async () => {
+    const nextId = DEMO.userId;
+    const nextPw = pw.trim();
+
+    await AsyncStorage.setItem(AUTH_KEYS.accountId, nextId);
+    await AsyncStorage.setItem(AUTH_KEYS.accountPw, nextPw);
+  };
 
   return (
     <LinearGradient colors={[COLORS.bgTop ?? COLORS.bg, COLORS.bgBottom ?? COLORS.bg]} style={{ flex: 1 }}>
@@ -321,7 +271,6 @@ export default function FindPasswordScreen() {
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          {/* 상단 고정 영역 */}
           {step !== 6 ? (
             <View style={styles.hero}>
               <View style={styles.logoCircle}>
@@ -339,7 +288,6 @@ export default function FindPasswordScreen() {
           )}
 
           <View style={styles.card}>
-            {/* ===== Step 1: ID ===== */}
             {step === 1 && (
               <View onLayout={(e) => setYId(e.nativeEvent.layout.y)}>
                 <View style={styles.singleInputBox}>
@@ -375,7 +323,6 @@ export default function FindPasswordScreen() {
               </View>
             )}
 
-            {/* ===== Step 2: Contact ===== */}
             {step === 2 && (
               <View onLayout={(e) => setYContact(e.nativeEvent.layout.y)}>
                 <View style={styles.contactWrap}>
@@ -386,10 +333,12 @@ export default function FindPasswordScreen() {
                       onPress={() => {
                         setMethod("phone");
                         clearError("contact");
-                        setTimeout(() => phoneRefA.current?.focus(), 80);
+                        setTimeout(() => phoneInputRef.current?.focus(), 80);
                       }}
                     >
-                      <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>전화번호</Text>
+                      <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
+                        전화번호
+                      </Text>
                     </Pressable>
 
                     <Text style={styles.methodDivider}>|</Text>
@@ -403,7 +352,9 @@ export default function FindPasswordScreen() {
                         setTimeout(() => emailRef.current?.focus(), 80);
                       }}
                     >
-                      <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>이메일</Text>
+                      <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>
+                        이메일
+                      </Text>
                     </Pressable>
                   </View>
 
@@ -411,71 +362,31 @@ export default function FindPasswordScreen() {
                     <Pressable
                       style={styles.phoneBox}
                       onPress={() => {
-                        if (phoneA.length < 3) phoneRefA.current?.focus();
-                        else if (phoneB.length < 4) phoneRefB.current?.focus();
-                        else phoneRefC.current?.focus();
+                        phoneInputRef.current?.focus();
                         scrollToY(yContact);
                       }}
                     >
-                      <TextInput
-                        ref={phoneRefA}
-                        style={styles.phoneInputA}
-                        value={phoneA}
-                        onChangeText={(t) => {
-                          const v = onlyDigits(t, 3);
-                          setPhoneA(v);
-                          clearError("contact");
-                          if (v.length === 3) phoneRefB.current?.focus();
-                        }}
-                        onFocus={() => scrollToY(yContact)}
-                        keyboardType="number-pad"
-                        maxLength={3}
-                        placeholder="010"
-                        placeholderTextColor="#9CA3AF"
-                        returnKeyType="next"
-                      />
-                      <Text style={styles.phoneHyphen}>-</Text>
+                      <View style={styles.phoneDisplayRow}>
+                        {renderPhoneCell(phoneA, "000", 72)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneB, "0000", 88)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneC, "0000", 88)}
+                      </View>
 
                       <TextInput
-                        ref={phoneRefB}
-                        style={styles.phoneInputB}
-                        value={phoneB}
+                        ref={phoneInputRef}
+                        style={styles.hiddenPhoneInput}
+                        value={phoneDigits}
                         onChangeText={(t) => {
-                          const v = onlyDigits(t, 4);
-                          setPhoneB(v);
+                          setPhoneDigits(onlyDigits(t, 11));
                           clearError("contact");
-                          if (v.length === 4) phoneRefC.current?.focus();
-                        }}
-                        onKeyPress={({ nativeEvent }) => {
-                          if (nativeEvent.key === "Backspace" && phoneB.length === 0) phoneRefA.current?.focus();
                         }}
                         onFocus={() => scrollToY(yContact)}
                         keyboardType="number-pad"
-                        maxLength={4}
-                        placeholder="0000"
-                        placeholderTextColor="#9CA3AF"
-                        returnKeyType="next"
-                      />
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <TextInput
-                        ref={phoneRefC}
-                        style={styles.phoneInputC}
-                        value={phoneC}
-                        onChangeText={(t) => {
-                          const v = onlyDigits(t, 4);
-                          setPhoneC(v);
-                          clearError("contact");
-                        }}
-                        onKeyPress={({ nativeEvent }) => {
-                          if (nativeEvent.key === "Backspace" && phoneC.length === 0) phoneRefB.current?.focus();
-                        }}
-                        onFocus={() => scrollToY(yContact)}
-                        keyboardType="number-pad"
-                        maxLength={4}
-                        placeholder="0000"
-                        placeholderTextColor="#9CA3AF"
+                        maxLength={11}
                         returnKeyType="done"
+                        caretHidden
                       />
                     </Pressable>
                   ) : (
@@ -521,7 +432,6 @@ export default function FindPasswordScreen() {
               </View>
             )}
 
-            {/* ===== Step 3: Name ===== */}
             {step === 3 && (
               <View onLayout={(e) => setYName(e.nativeEvent.layout.y)}>
                 <View style={styles.singleInputBox}>
@@ -555,7 +465,6 @@ export default function FindPasswordScreen() {
               </View>
             )}
 
-            {/* ===== Step 4: Code ===== */}
             {step === 4 && (
               <View onLayout={(e) => setYCode(e.nativeEvent.layout.y)}>
                 <View style={styles.singleInputBox}>
@@ -591,11 +500,9 @@ export default function FindPasswordScreen() {
               </View>
             )}
 
-            {/* ===== Step 5: Reset PW (✅ 이 부분만 예쁘게 “큰 네모 1개”로) ===== */}
             {step === 5 && (
               <View onLayout={(e) => setYPw(e.nativeEvent.layout.y)}>
                 <View style={styles.pwGroup}>
-                  {/* row 1 */}
                   <View style={styles.pwRow}>
                     <TextInput
                       ref={pwRef}
@@ -615,14 +522,12 @@ export default function FindPasswordScreen() {
                       onSubmitEditing={() => pw2Ref.current?.focus()}
                     />
                     <Pressable style={styles.eyeBtn} onPress={() => setPwShow((v) => !v)} hitSlop={8}>
-                      {/* ✅ 정상: 보이는 상태면 eye-off(숨기기) */}
                       <Ionicons name={pwShow ? "eye-off" : "eye"} size={20} color="rgba(17,24,39,0.45)" />
                     </Pressable>
                   </View>
 
                   <View style={styles.pwDivider} />
 
-                  {/* row 2 */}
                   <View style={styles.pwRow}>
                     <TextInput
                       ref={pw2Ref}
@@ -646,13 +551,13 @@ export default function FindPasswordScreen() {
                   </View>
                 </View>
 
-                {/* ✅ 오류 메시지는 무조건 “확인 입력란 아래” */}
                 {!!step5Error && <Text style={styles.errorTextPw}>{step5Error}</Text>}
 
                 <Pressable
                   style={styles.primaryBtn}
-                  onPress={() => {
+                  onPress={async () => {
                     if (!validateStep5()) return;
+                    await saveNewPassword();
                     setStep(6);
                   }}
                 >
@@ -661,20 +566,16 @@ export default function FindPasswordScreen() {
               </View>
             )}
 
-            {/* ===== Step 6: Done ===== */}
-{/* ===== Step 6: Done ===== */}
-{step === 6 && (
-  <View>
-    <Pressable
-      style={[styles.primaryBtn, { marginTop: 5 }]}
-      onPress={() => router.replace("/(auth)/login")}
-    >
-      <Text style={styles.primaryBtnText}>로그인으로 이동</Text>
-    </Pressable>
-
-  </View>
-)}
-
+            {step === 6 && (
+              <View>
+                <Pressable
+                  style={[styles.primaryBtn, { marginTop: 5 }]}
+                  onPress={() => router.replace("/(auth)/login")}
+                >
+                  <Text style={styles.primaryBtnText}>로그인으로 이동</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           <View style={{ height: 26 }} />
@@ -730,7 +631,6 @@ const styles = StyleSheet.create({
     ...SHADOW.card,
   },
 
-  // 공통 입력 박스(센터 정렬)
   singleInputBox: {
     height: 54,
     borderRadius: 16,
@@ -749,7 +649,6 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
 
-  // 큰 테두리 (전화번호/이메일)
   contactWrap: {
     borderRadius: 16,
     borderWidth: 1,
@@ -782,43 +681,41 @@ const styles = StyleSheet.create({
   phoneBox: {
     height: 54,
     paddingHorizontal: 14,
+    justifyContent: "center",
+    backgroundColor: "#fff",
+    position: "relative",
+  },
+  phoneDisplayRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    justifyContent: "center",
+  },
+  phoneCell: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  phoneCellText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+  },
+  phonePlaceholder: {
+    color: "#9CA3AF",
   },
   phoneHyphen: {
-    width: 18,
-    textAlign: "center",
+    marginHorizontal: 2,
     fontSize: 14,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
   },
-  phoneInputA: {
-    flex: 3,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
-  },
-  phoneInputB: {
-    flex: 4,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
-  },
-  phoneInputC: {
-    flex: 4,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
+  hiddenPhoneInput: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 
   emailBox: {
@@ -836,7 +733,6 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
 
-  // ✅ Step5: 큰 네모 1개로 묶는 비번 그룹
   pwGroup: {
     borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.92)",
@@ -851,7 +747,7 @@ const styles = StyleSheet.create({
     position: "relative",
     paddingHorizontal: 14,
     backgroundColor: "#fff",
-    paddingLeft: 44
+    paddingLeft: 44,
   },
   pwInput: {
     fontSize: 16,
@@ -859,7 +755,7 @@ const styles = StyleSheet.create({
     color: "#111827",
     textAlign: "center",
     paddingVertical: 0,
-    paddingRight: 34, // eye 버튼 자리
+    paddingRight: 34,
   },
   pwDivider: {
     height: 1,
@@ -875,7 +771,6 @@ const styles = StyleSheet.create({
     color: "#EF4444",
     textAlign: "center",
   },
-  // ✅ Step5 전용: 그룹 아래에 깔끔하게
   errorTextPw: {
     marginTop: 8,
     marginBottom: 2,
@@ -896,7 +791,6 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "900" },
 
-  // 완료 카드
   resultCard: {
     borderRadius: 18,
     padding: 18,

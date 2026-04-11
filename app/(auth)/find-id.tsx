@@ -21,7 +21,7 @@ type Step = 1 | 2 | 3 | 4;
 type Errors = Partial<Record<"contact" | "name" | "code", string>>;
 
 const DEMO = {
-  phoneDigits: "01012345678", // 010-1234-5678
+  phoneDigits: "01012345678",
   email: "stt@naver.com",
   name: "admin",
   code: "123456",
@@ -34,30 +34,19 @@ export default function FindIdScreen() {
   const [step, setStep] = useState<Step>(1);
   const [method, setMethod] = useState<Method>("phone");
 
-  // Step1: phone/email
-  const [email, setEmail] = useState(""); // stt@naver.com를 직접 입력해야 통과
-  const [phoneA, setPhoneA] = useState(""); // 3
-  const [phoneB, setPhoneB] = useState(""); // 4
-  const [phoneC, setPhoneC] = useState(""); // 4
-  const phoneDigits = useMemo(() => `${phoneA}${phoneB}${phoneC}`, [phoneA, phoneB, phoneC]);
+  const [email, setEmail] = useState("");
+  const [phoneDigits, setPhoneDigits] = useState("");
 
-  // Step2: name/org
   const [name, setName] = useState("");
-
-  // Step3: code
   const [code, setCode] = useState("");
 
   const [errors, setErrors] = useState<Errors>({});
 
-  // refs
-  const phoneRefA = useRef<TextInput>(null);
-  const phoneRefB = useRef<TextInput>(null);
-  const phoneRefC = useRef<TextInput>(null);
+  const phoneInputRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
   const nameRef = useRef<TextInput>(null);
   const codeRef = useRef<TextInput>(null);
 
-  // scroll
   const scrollRef = useRef<ScrollView>(null);
   const [yContact, setYContact] = useState(0);
   const [yName, setYName] = useState(0);
@@ -80,9 +69,6 @@ export default function FindIdScreen() {
 
   const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
 
-  /**
-   * ✅ 처음 페이지 진입 시 자동 focus 막기
-   */
   const didEnterRef = useRef(false);
   const shouldAutoFocusRef = useRef<null | "step2" | "step3">(null);
 
@@ -113,14 +99,16 @@ export default function FindIdScreen() {
 
   const validateStep1 = () => {
     const next: Errors = {};
+
     if (method === "phone") {
-      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리 이내로 입력해주세요";
+      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리로 입력해주세요";
       else if (phoneDigits !== DEMO.phoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
     } else {
       const v = email.trim();
       if (!v) next.contact = "이메일을 입력해주세요";
       else if (v !== DEMO.email) next.contact = "가입 정보와 일치하지 않습니다";
     }
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -128,8 +116,10 @@ export default function FindIdScreen() {
   const validateStep2 = () => {
     const next: Errors = {};
     const v = name.trim();
+
     if (!v) next.name = "이름 또는 단체명을 입력해주세요";
     else if (v !== DEMO.name) next.name = "가입 정보와 일치하지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -137,8 +127,10 @@ export default function FindIdScreen() {
   const validateStep3 = () => {
     const next: Errors = {};
     const v = code.trim();
+
     if (v.length !== 6) next.code = "인증코드 6자리를 입력해주세요";
     else if (v !== DEMO.code) next.code = "인증코드가 올바르지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -150,40 +142,51 @@ export default function FindIdScreen() {
       setStep(2);
       return;
     }
+
     if (step === 2) {
       if (!validateStep2()) return;
       shouldAutoFocusRef.current = "step3";
       setStep(3);
       return;
     }
+
     if (step === 3) {
       if (!validateStep3()) return;
       setStep(4);
-      return;
     }
-  };
-
-  const resetAll = () => {
-    setStep(1);
-    setErrors({});
-    setEmail("");
-    setPhoneA("");
-    setPhoneB("");
-    setPhoneC("");
-    setName("");
-    setCode("");
-    shouldAutoFocusRef.current = null;
   };
 
   const headerTitle = step === 4 ? "아이디 찾기 완료" : "아이디 찾기";
 
-  // ✅ 단계별 hero 텍스트를 바꾸기 쉽게 한 곳에서 관리
   const HERO_TEXT = useMemo(() => {
-    if (step === 1) return { title: "전화번호 또는 이메일", sub: "전화번호 또는 이메일을 입력하세요" };
-    if (step === 2) return { title: "이름 또는 단체명", sub: "이름 또는 단체명을 입력하세요" };
-    if (step === 3) return { title: "인증코드", sub: "전송된 6자리 인증코드를 입력하세요" };
+    if (step === 1) {
+      return { title: "전화번호 또는 이메일", sub: "전화번호 또는 이메일을 입력하세요" };
+    }
+    if (step === 2) {
+      return { title: "이름 또는 단체명", sub: "이름 또는 단체명을 입력하세요" };
+    }
+    if (step === 3) {
+      return { title: "인증코드", sub: "전송된 6자리 인증코드를 입력하세요" };
+    }
     return { title: "완료", sub: "" };
   }, [step]);
+
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
+
+  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+    const shown = value || placeholder;
+    const isPlaceholder = value.length === 0;
+
+    return (
+      <View style={[styles.phoneCell, { width }]}>
+        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+          {shown}
+        </Text>
+      </View>
+    );
+  };
 
   return (
     <LinearGradient colors={[COLORS.bgTop ?? COLORS.bg, COLORS.bgBottom ?? COLORS.bg]} style={{ flex: 1 }}>
@@ -209,7 +212,6 @@ export default function FindIdScreen() {
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          {/* 상단 고정 영역 */}
           {step !== 4 ? (
             <View style={styles.hero}>
               <View style={styles.logoCircle}>
@@ -237,7 +239,7 @@ export default function FindIdScreen() {
                       onPress={() => {
                         setMethod("phone");
                         clearError("contact");
-                        setTimeout(() => phoneRefA.current?.focus(), 80);
+                        setTimeout(() => phoneInputRef.current?.focus(), 80);
                       }}
                     >
                       <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
@@ -263,77 +265,37 @@ export default function FindIdScreen() {
                   </View>
 
                   {method === "phone" ? (
-                    // ✅ 박스 아무데나 눌러도 입력 포커스 되게 (체감상 “입력 안 됨” 방지)
                     <Pressable
                       style={styles.phoneBox}
                       onPress={() => {
-                        // 비어있는 첫 칸으로 포커스
-                        if (phoneA.length < 3) phoneRefA.current?.focus();
-                        else if (phoneB.length < 4) phoneRefB.current?.focus();
-                        else phoneRefC.current?.focus();
+                        phoneInputRef.current?.focus();
                         scrollToY(yContact);
                       }}
                     >
-                      <TextInput
-                        ref={phoneRefA}
-                        style={styles.phoneInputA}
-                        value={phoneA}
-                        onChangeText={(t) => {
-                          const v = onlyDigits(t, 3);
-                          setPhoneA(v);
-                          clearError("contact");
-                          if (v.length === 3) phoneRefB.current?.focus();
-                        }}
-                        onFocus={() => scrollToY(yContact)}
-                        keyboardType="number-pad"
-                        maxLength={3}
-                        placeholder="010"
-                        placeholderTextColor="#9CA3AF"
-                        returnKeyType="next"
-                      />
-                      <Text style={styles.phoneHyphen}>-</Text>
+                      <View style={styles.phoneDisplayRow}>
+                        {renderPhoneCell(phoneA, "000", 78)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneB, "0000", 92)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneC, "0000", 92)}
+                      </View>
 
                       <TextInput
-                        ref={phoneRefB}
-                        style={styles.phoneInputB}
-                        value={phoneB}
+                        ref={phoneInputRef}
+                        style={styles.hiddenPhoneInput}
+                        value={phoneDigits}
                         onChangeText={(t) => {
-                          const v = onlyDigits(t, 4);
-                          setPhoneB(v);
-                          clearError("contact");
-                          if (v.length === 4) phoneRefC.current?.focus();
-                        }}
-                        onKeyPress={({ nativeEvent }) => {
-                          if (nativeEvent.key === "Backspace" && phoneB.length === 0) {
-                            phoneRefA.current?.focus();
-                          }
-                        }}
-                        keyboardType="number-pad"
-                        maxLength={4}
-                        placeholder="0000"
-                        placeholderTextColor="#9CA3AF"
-                      />
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <TextInput
-                        ref={phoneRefC}
-                        style={styles.phoneInputC}
-                        value={phoneC}
-                        onChangeText={(t) => {
-                          const v = onlyDigits(t, 4);
-                          setPhoneC(v);
+                          setPhoneDigits(onlyDigits(t, 11));
                           clearError("contact");
                         }}
                         onFocus={() => scrollToY(yContact)}
                         keyboardType="number-pad"
-                        maxLength={4}
-                        placeholder="0000"
-                        placeholderTextColor="#9CA3AF"
+                        maxLength={11}
                         returnKeyType="done"
+                        caretHidden
                       />
                     </Pressable>
                   ) : (
-                    // ✅ 이메일도 박스 아무데나 눌러도 포커스 + 입력되게 확실히
                     <Pressable
                       style={styles.emailBox}
                       onPress={() => {
@@ -397,7 +359,6 @@ export default function FindIdScreen() {
 
             {step === 3 && (
               <View onLayout={(e) => setYCode(e.nativeEvent.layout.y)}>
-
                 <View style={styles.singleInputBox}>
                   <TextInput
                     ref={codeRef}
@@ -424,24 +385,21 @@ export default function FindIdScreen() {
               </View>
             )}
 
-{step === 4 && (
-  <View>
-    {/* 아이디 표시 네모칸 */}
-    <View style={styles.resultCard}>
-      <Text style={styles.resultTitle}>찾은 아이디</Text>
-      <Text style={styles.resultId}>{DEMO.foundId}</Text>
-    </View>
+            {step === 4 && (
+              <View>
+                <View style={styles.resultCard}>
+                  <Text style={styles.resultTitle}>찾은 아이디</Text>
+                  <Text style={styles.resultId}>{DEMO.foundId}</Text>
+                </View>
 
-    {/* 🔥 네모칸 밖으로 버튼 이동 */}
-    <Pressable
-      style={[styles.primaryBtn, { marginTop: 18 }]}
-      onPress={() => router.replace("/(auth)/login")}
-    >
-      <Text style={styles.primaryBtnText}>로그인으로 이동</Text>
-    </Pressable>
-  </View>
-)}
-
+                <Pressable
+                  style={[styles.primaryBtn, { marginTop: 18 }]}
+                  onPress={() => router.replace("/(auth)/login")}
+                >
+                  <Text style={styles.primaryBtnText}>로그인으로 이동</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           <View style={{ height: 26 }} />
@@ -478,7 +436,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   heroTitle: { fontSize: 18, fontWeight: "900", color: "#111827", marginTop: 9 },
-  heroSub: { marginTop: 4, fontSize: 13, fontWeight: "700", color: "rgba(17,24,39,0.55)", textAlign: "center" },
+  heroSub: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "700",
+    color: "rgba(17,24,39,0.55)",
+    textAlign: "center",
+  },
 
   heroDone: { alignItems: "center", marginTop: 22, marginBottom: 14 },
   doneTitle: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#111827" },
@@ -538,46 +502,50 @@ const styles = StyleSheet.create({
   phoneBox: {
     height: 54,
     paddingHorizontal: 14,
+    justifyContent: "center",
+    backgroundColor: "#fff",
+    position: "relative",
+  },
+
+  phoneDisplayRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    justifyContent: "center",
   },
+
+  phoneCell: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  phoneCellText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+  },
+
+  phonePlaceholder: {
+    color: "#9CA3AF",
+  },
+
   phoneHyphen: {
-    width: 18,
+    width: 10,
     textAlign: "center",
     fontSize: 14,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
   },
-  phoneInputA: {
-    flex: 3,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
-  },
-  phoneInputB: {
-    flex: 4,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
-  },
-  phoneInputC: {
-    flex: 4,
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    letterSpacing: 0,
+
+  hiddenPhoneInput: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 
-  // ✅ 이메일 입력이 “확실히” 되게: 컨테이너를 Pressable로 + input에 flex:1
   emailBox: {
     height: 54,
     paddingHorizontal: 14,
@@ -639,16 +607,17 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     ...SHADOW.card,
   },
-  resultIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.success ?? "#22C55E",
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 10,
+  resultTitle: {
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "900",
+    color: "rgba(0, 0, 0, 0.55)",
   },
-  resultTitle: { textAlign: "center", fontSize: 16, fontWeight: "900", color: "rgba(0, 0, 0, 0.55)" },
-  resultId: { textAlign: "center", marginTop: 10, fontSize: 26, fontWeight: "900", color: "#111827" },
+  resultId: {
+    textAlign: "center",
+    marginTop: 10,
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111827",
+  },
 });

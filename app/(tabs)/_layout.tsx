@@ -1,41 +1,68 @@
+// app/(tabs)/_layout.tsx
+import { COLORS } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Tabs, useRouter } from "expo-router";
-import React, { useEffect } from "react";
-import { COLORS } from "../../constants/theme";
+import { BottomTabBar } from "@react-navigation/bottom-tabs";
+import { Tabs } from "expo-router";
+import React from "react";
+import { View } from "react-native";
+
+const TAB_H = 70;
+const DIVIDER_H = 35;
 
 export default function TabsLayout() {
-  const router = useRouter();
-
-  // 탭 진입 시 로그인 체크(간단 가드)
-  useEffect(() => {
-    (async () => {
-      const v = await AsyncStorage.getItem("isLoggedIn");
-      if (v !== "true") router.replace("/(auth)/login");
-    })();
-  }, [router]);
-
   return (
     <Tabs
+      tabBar={(props) => (
+        <View style={{ position: "relative" }}>
+          <BottomTabBar {...props} />
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: "50%",
+              marginLeft: -0.5,
+              top: "50%",
+              marginTop: -(DIVIDER_H / 2),
+              height: DIVIDER_H,
+              width: 1,
+              backgroundColor: "rgba(0,0,0,0.08)",
+            }}
+          />
+        </View>
+      )}
       screenOptions={{
         headerShown: false,
-        tabBarStyle: { height: 64, paddingTop: 6, paddingBottom: 10 },
         tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: "#9CA3AF",
+        tabBarInactiveTintColor: "#9AA3AF",
+        tabBarStyle: {
+          height: TAB_H,
+          paddingTop: 5,
+          paddingBottom: 10,
+          borderTopWidth: 0,
+          backgroundColor: "#fff",
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "700",
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "위치추적",
-          tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-outline" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
           title: "알림",
-          tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="notifications-outline" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>
