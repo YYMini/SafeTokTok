@@ -16,7 +16,7 @@ public class LocationController {
 
     private final Map<Long, LocationResponse> latestLocations = new HashMap<>();
 
-    @PostMapping
+    @PostMapping(produces = "application/json; charset=UTF-8")
     public Map<String, Object> saveLocation(@RequestBody LocationRequest request) {
         String name;
         if (request.getChildId() == 1L) {
@@ -47,7 +47,7 @@ public class LocationController {
         return result;
     }
 
-    @GetMapping("/latest")
+    @GetMapping(value = "/latest", produces = "application/json; charset=UTF-8")
     public List<LocationResponse> getLatestLocations() {
         Map<Long, LocationResponse> merged = new HashMap<>();
 

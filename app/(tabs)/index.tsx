@@ -232,9 +232,7 @@ function MapPlaceholder() {
       markersRef.current.push(marker);
       overlaysRef.current.push(overlay);
 
-      if (index === 0) {
-        mapInstanceRef.current.setCenter(position);
-      }
+      
     });
   };
   const getChildIdFromUrl = () => {
