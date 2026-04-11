@@ -1,4 +1,3 @@
-// app/(auth)/login.tsx
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,31 +17,14 @@ import {
 import { COLORS, SHADOW } from "../../constants/theme";
 import { useAuth } from "../_layout";
 
-type Profile = {
-  name: string;
-  userId: string;
-  email: string;
-  phone: string;
-  imageUri: string | null;
-};
-
-const PROFILE_KEY = "profileData_v1";
-const PASSWORD_KEY = "loginPassword_v1";
-
 const STORAGE_KEYS = {
   remember: "rememberMe",
   savedId: "savedLoginId",
   savedPw: "savedLoginPw",
   isLoggedIn: "isLoggedIn",
+  accountId: "authAccountId",
+  accountPw: "authAccountPw",
 } as const;
-
-const DEFAULT_PROFILE: Profile = {
-  name: "보호자",
-  userId: "admin",
-  email: "stt@naver.com",
-  phone: "010-0000-0000",
-  imageUri: null,
-};
 
 type ToastType = "error" | "success" | "none";
 
@@ -67,7 +49,6 @@ export default function LoginScreen() {
       clearTimeout(toastTimerRef.current);
       toastTimerRef.current = null;
     }
-
     Animated.timing(toastAnim, {
       toValue: 0,
       duration: 160,
@@ -142,26 +123,29 @@ export default function LoginScreen() {
       return;
     }
 
+    let accountId = "";
+    let accountPw = "";
+
     try {
-      const [savedProfileRaw, savedPasswordRaw] = await Promise.all([
-        AsyncStorage.getItem(PROFILE_KEY),
-        AsyncStorage.getItem(PASSWORD_KEY),
-      ]);
+      accountId = (await AsyncStorage.getItem(STORAGE_KEYS.accountId)) ?? "";
+      accountPw = (await AsyncStorage.getItem(STORAGE_KEYS.accountPw)) ?? "";
+    } catch {
+      // ignore
+    }
 
-      const savedProfile = savedProfileRaw
-        ? ({ ...DEFAULT_PROFILE, ...JSON.parse(savedProfileRaw) } as Profile)
-        : DEFAULT_PROFILE;
+    // 회원가입된 계정이 없으면 로그인 불가
+    if (!accountId || !accountPw) {
+      showToast("error", "회원가입 후 로그인해주세요");
+      return;
+    }
 
-      const validId = (savedProfile.userId || DEFAULT_PROFILE.userId).trim();
-      const validPw = (savedPasswordRaw ?? "admin").trim();
+    const ok = normalized.id === accountId && normalized.pw === accountPw;
+    if (!ok) {
+      showToast("error", "아이디 및 비밀번호가 틀렸습니다");
+      return;
+    }
 
-      const ok = normalized.id === validId && normalized.pw === validPw;
-
-      if (!ok) {
-        showToast("error", "아이디 및 비밀번호가 틀렸습니다");
-        return;
-      }
-
+    try {
       if (rememberMe) {
         await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
         await AsyncStorage.setItem(STORAGE_KEYS.savedId, normalized.id);
@@ -171,14 +155,13 @@ export default function LoginScreen() {
         await AsyncStorage.removeItem(STORAGE_KEYS.savedId);
         await AsyncStorage.removeItem(STORAGE_KEYS.savedPw);
       }
-
       await AsyncStorage.setItem(STORAGE_KEYS.isLoggedIn, "true");
-
-      await login();
-      router.replace("/(tabs)");
     } catch {
-      showToast("error", "로그인 처리 중 오류가 발생했습니다");
+      // ignore
     }
+
+    await login();
+    router.replace("/(tabs)");
   };
 
   const goSignup = () => router.push("/(auth)/signup");
@@ -189,11 +172,7 @@ export default function LoginScreen() {
     const isError = toastType === "error";
     const isSuccess = toastType === "success";
 
-    const iconName = isError
-      ? "alert-circle"
-      : isSuccess
-      ? "checkmark-circle"
-      : "information-circle";
+    const iconName = isError ? "alert-circle" : isSuccess ? "checkmark-circle" : "information-circle";
     const iconColor = isError ? COLORS.danger : isSuccess ? COLORS.success : COLORS.text;
 
     const bg = isError ? "rgba(255, 235, 235, 0.92)" : "rgba(235, 255, 243, 0.92)";
@@ -226,12 +205,7 @@ export default function LoginScreen() {
             },
           ]}
         >
-          <View
-            style={[
-              styles.toastBox,
-              { backgroundColor: toastUI.bg, borderColor: toastUI.border },
-            ]}
-          >
+          <View style={[styles.toastBox, { backgroundColor: toastUI.bg, borderColor: toastUI.border }]}>
             <Ionicons name={toastUI.iconName as any} size={22} color={toastUI.iconColor} />
             <Text style={[styles.toastText, { color: toastUI.textColor }]} numberOfLines={2}>
               {toastText}
@@ -289,11 +263,7 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.optionsRow}>
-            <Pressable
-              style={styles.rememberRow}
-              onPress={() => setRememberMe((v) => !v)}
-              hitSlop={8}
-            >
+            <Pressable style={styles.rememberRow} onPress={() => setRememberMe((v) => !v)} hitSlop={8}>
               <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
                 {rememberMe && <Ionicons name="checkmark" size={16} color="#fff" />}
               </View>
@@ -428,17 +398,13 @@ const styles = StyleSheet.create({
     marginRight: -2,
     position: "relative",
   },
+
   checkboxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   rememberText: { fontSize: 14, fontWeight: "800", color: "#111827" },
 
   findRow: { flexDirection: "row", alignItems: "center", marginRight: 3 },
   findText: { fontSize: 12, fontWeight: "800", color: "rgba(17,24,39,0.55)" },
-  divider: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.25)",
-    marginHorizontal: 6,
-  },
+  divider: { fontSize: 12, fontWeight: "900", color: "rgba(17,24,39,0.25)", marginHorizontal: 6 },
 
   loginBtn: {
     height: 53,
@@ -454,10 +420,5 @@ const styles = StyleSheet.create({
   signupBtn: { marginTop: 23, alignItems: "center", marginBottom: 5 },
   signupText: { fontSize: 16, fontWeight: "900", color: "rgba(17,24,39,0.50)" },
 
-  footer: {
-    marginTop: 20,
-    textAlign: "center",
-    color: "rgba(17,24,39,0.35)",
-    fontWeight: "700",
-  },
+  footer: { marginTop: 20, textAlign: "center", color: "rgba(17,24,39,0.35)", fontWeight: "700" },
 });

@@ -19,94 +19,21 @@ import { COLORS, SHADOW } from "../../constants/theme";
 
 type Method = "phone" | "email";
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
-type PhoneSection = "A" | "B" | "C";
 
 type Errors = Partial<Record<"userId" | "contact" | "name" | "code" | "pw" | "pw2", string>>;
 
-type Profile = {
-  name: string;
-  userId: string;
-  email: string;
-  phone: string;
-  imageUri: string | null;
-};
-
-const PROFILE_KEY = "profileData_v1";
-const PASSWORD_KEY = "loginPassword_v1";
-
-const DEFAULT_PROFILE: Profile = {
-  name: "보호자",
-  userId: "admin",
-  email: "stt@naver.com",
-  phone: "010-0000-0000",
-  imageUri: null,
-};
-
-const DEMO = {
-  code: "123456",
+const AUTH_KEYS = {
+  accountId: "authAccountId",
+  accountPw: "authAccountPw",
 } as const;
 
-function PhoneVisualSlot({
-  max,
-  baseText,
-  digits,
-  digitW,
-  showCursor,
-  cursorIndex,
-  onPress,
-}: {
-  max: number;
-  baseText: string;
-  digits: string;
-  digitW: number;
-  showCursor: boolean;
-  cursorIndex: number;
-  onPress: () => void;
-}) {
-  const len = Math.min(digits.length, max);
-  const shownBase = baseText.slice(0, max);
-  const slotWidth = digitW * max;
-  const safeCursorIndex = Math.max(0, Math.min(cursorIndex, max));
-
-  return (
-    <Pressable onPress={onPress} style={[styles.slotWrap, { width: slotWidth, height: 24 }]}>
-      <View style={styles.slotRow} pointerEvents="none">
-        {shownBase.split("").map((ch, i) => (
-          <Text
-            key={`b-${i}`}
-            style={[styles.slotBaseChar, { width: digitW }, i < len && styles.charTransparent]}
-          >
-            {ch}
-          </Text>
-        ))}
-      </View>
-
-      <View style={[styles.slotRow, styles.slotOverlay]} pointerEvents="none">
-        {digits
-          .padEnd(max, " ")
-          .slice(0, max)
-          .split("")
-          .map((ch, i) => (
-            <Text key={`t-${i}`} style={[styles.slotTopChar, { width: digitW }]}>
-              {ch}
-            </Text>
-          ))}
-      </View>
-
-      {showCursor && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.slotCursor,
-            {
-              left: safeCursorIndex * digitW - 1,
-            },
-          ]}
-        />
-      )}
-    </Pressable>
-  );
-}
+const DEMO = {
+  userId: "admin",
+  phoneDigits: "01012345678",
+  email: "stt@naver.com",
+  name: "admin",
+  code: "123456",
+} as const;
 
 export default function FindPasswordScreen() {
   const router = useRouter();
@@ -115,15 +42,10 @@ export default function FindPasswordScreen() {
   const [method, setMethod] = useState<Method>("phone");
 
   const [userId, setUserId] = useState("");
-
   const [email, setEmail] = useState("");
-  const [phoneA, setPhoneA] = useState("");
-  const [phoneB, setPhoneB] = useState("");
-  const [phoneC, setPhoneC] = useState("");
-  const phoneDigits = useMemo(() => `${phoneA}${phoneB}${phoneC}`, [phoneA, phoneB, phoneC]);
+  const [phoneDigits, setPhoneDigits] = useState("");
 
   const [name, setName] = useState("");
-
   const [code, setCode] = useState("");
 
   const [pw, setPw] = useState("");
@@ -132,7 +54,6 @@ export default function FindPasswordScreen() {
   const [pw2Show, setPw2Show] = useState(false);
 
   const [errors, setErrors] = useState<Errors>({});
-  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
 
   const idRef = useRef<TextInput>(null);
   const phoneInputRef = useRef<TextInput>(null);
@@ -148,14 +69,6 @@ export default function FindPasswordScreen() {
   const [yName, setYName] = useState(0);
   const [yCode, setYCode] = useState(0);
   const [yPw, setYPw] = useState(0);
-
-  const [digitW, setDigitW] = useState(9);
-  const [digitH, setDigitH] = useState(20);
-  const [activePhoneSection, setActivePhoneSection] = useState<PhoneSection>("A");
-  const [phoneFocused, setPhoneFocused] = useState(false);
-
-  const A_BASE = "010";
-  const B_BASE = "0000";
 
   const scrollToY = (y: number) => {
     requestAnimationFrame(() => {
@@ -175,28 +88,7 @@ export default function FindPasswordScreen() {
   const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
 
   const didEnterRef = useRef(false);
-  const shouldAutoFocusRef = useRef<null | "id" | "name" | "code" | "pw">(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const savedProfileRaw = await AsyncStorage.getItem(PROFILE_KEY);
-        if (savedProfileRaw) {
-          const parsed = JSON.parse(savedProfileRaw) as Partial<Profile>;
-          setProfile({
-            ...DEFAULT_PROFILE,
-            ...parsed,
-            userId: parsed.userId ?? DEFAULT_PROFILE.userId,
-            email: parsed.email ?? DEFAULT_PROFILE.email,
-            phone: parsed.phone ?? DEFAULT_PROFILE.phone,
-            name: parsed.name ?? DEFAULT_PROFILE.name,
-          });
-        }
-      } catch {
-        setProfile(DEFAULT_PROFILE);
-      }
-    })();
-  }, []);
+  const shouldAutoFocusRef = useRef<null | "id" | "contactPhone" | "contactEmail" | "name" | "code" | "pw">(null);
 
   useEffect(() => {
     if (!didEnterRef.current) {
@@ -214,6 +106,23 @@ export default function FindPasswordScreen() {
     }
 
     if (step === 2) {
+      const next = shouldAutoFocusRef.current;
+      if (next === "contactPhone") {
+        shouldAutoFocusRef.current = null;
+        setTimeout(() => {
+          phoneInputRef.current?.focus();
+          scrollToY(yContact);
+        }, 60);
+        return;
+      }
+      if (next === "contactEmail") {
+        shouldAutoFocusRef.current = null;
+        setTimeout(() => {
+          emailRef.current?.focus();
+          scrollToY(yContact);
+        }, 60);
+        return;
+      }
       return;
     }
 
@@ -241,34 +150,28 @@ export default function FindPasswordScreen() {
         pwRef.current?.focus();
         scrollToY(yPw);
       }, 60);
-      return;
     }
   }, [step, yId, yContact, yName, yCode, yPw]);
 
   const validateStep1 = () => {
     const next: Errors = {};
     const v = userId.trim();
-
     if (!v) next.userId = "아이디를 입력해주세요";
-    else if (v !== profile.userId) next.userId = "가입 정보와 일치하지 않습니다";
-
+    else if (v !== DEMO.userId) next.userId = "가입 정보와 일치하지 않습니다";
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
   const validateStep2 = () => {
     const next: Errors = {};
-
     if (method === "phone") {
-      const savedPhoneDigits = (profile.phone ?? "").replace(/[^0-9]/g, "").slice(0, 11);
-      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리만 입력 가능합니다";
-      else if (phoneDigits !== savedPhoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
+      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리로 입력해주세요";
+      else if (phoneDigits !== DEMO.phoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
     } else {
       const v = email.trim();
       if (!v) next.contact = "이메일을 입력해주세요";
-      else if (v !== (profile.email ?? "").trim()) next.contact = "가입 정보와 일치하지 않습니다";
+      else if (v !== DEMO.email) next.contact = "가입 정보와 일치하지 않습니다";
     }
-
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -276,10 +179,8 @@ export default function FindPasswordScreen() {
   const validateStep3 = () => {
     const next: Errors = {};
     const v = name.trim();
-
     if (!v) next.name = "이름 또는 단체명을 입력해주세요";
-    else if (v !== (profile.name ?? "").trim()) next.name = "가입 정보와 일치하지 않습니다";
-
+    else if (v !== DEMO.name) next.name = "가입 정보와 일치하지 않습니다";
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -287,10 +188,8 @@ export default function FindPasswordScreen() {
   const validateStep4 = () => {
     const next: Errors = {};
     const v = code.trim();
-
     if (v.length !== 6) next.code = "인증코드 6자리를 입력해주세요";
     else if (v !== DEMO.code) next.code = "인증코드가 올바르지 않습니다";
-
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -301,55 +200,13 @@ export default function FindPasswordScreen() {
     const p2 = pw2;
 
     if (!p1) next.pw = "새 비밀번호를 입력해주세요";
-    else if (p1.length < 5 || p1.length > 20) next.pw = "비밀번호는 5~20자 이내로 입력 가능합니다";
+    else if (p1.length < 5) next.pw = "비밀번호는 5자 이상으로 입력해주세요";
 
     if (!p2) next.pw2 = "비밀번호 확인을 입력해주세요";
     else if (p2 !== p1) next.pw2 = "비밀번호가 일치하지 않습니다";
 
     setErrors(next);
     return Object.keys(next).length === 0;
-  };
-
-  const onNext = async () => {
-    if (step === 1) {
-      if (!validateStep1()) return;
-      shouldAutoFocusRef.current = null;
-      setStep(2);
-      return;
-    }
-
-    if (step === 2) {
-      if (!validateStep2()) return;
-      shouldAutoFocusRef.current = "name";
-      setStep(3);
-      return;
-    }
-
-    if (step === 3) {
-      if (!validateStep3()) return;
-      shouldAutoFocusRef.current = "code";
-      setStep(4);
-      return;
-    }
-
-    if (step === 4) {
-      if (!validateStep4()) return;
-      shouldAutoFocusRef.current = "pw";
-      setStep(5);
-      return;
-    }
-
-    if (step === 5) {
-      if (!validateStep5()) return;
-
-      try {
-        await AsyncStorage.setItem(PASSWORD_KEY, pw);
-      } catch {
-        // ignore
-      }
-
-      setStep(6);
-    }
   };
 
   const headerTitle = step === 6 ? "비밀번호 재설정 완료" : "비밀번호 찾기";
@@ -365,89 +222,30 @@ export default function FindPasswordScreen() {
 
   const step5Error = errors.pw2 || errors.pw;
 
-  const focusPhone = (section?: PhoneSection) => {
-    const nextSection = section ?? activePhoneSection;
-    setActivePhoneSection(nextSection);
-    setTimeout(() => {
-      phoneInputRef.current?.focus();
-      scrollToY(yContact);
-    }, 0);
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
+
+  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+    const shown = value || placeholder;
+    const isPlaceholder = value.length === 0;
+
+    return (
+      <View style={[styles.phoneCell, { width }]}>
+        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+          {shown}
+        </Text>
+      </View>
+    );
   };
 
-  const appendDigit = (d: string) => {
-    if (activePhoneSection === "A") {
-      if (phoneA.length < 3) {
-        setPhoneA((prev) => (prev + d).slice(0, 3));
-        return;
-      }
-      setActivePhoneSection("B");
-      setPhoneB((prev) => (prev + d).slice(0, 4));
-      return;
-    }
+  const saveNewPassword = async () => {
+    const nextId = DEMO.userId;
+    const nextPw = pw.trim();
 
-    if (activePhoneSection === "B") {
-      if (phoneB.length < 4) {
-        setPhoneB((prev) => (prev + d).slice(0, 4));
-        return;
-      }
-      setActivePhoneSection("C");
-      setPhoneC((prev) => (prev + d).slice(0, 4));
-      return;
-    }
-
-    if (activePhoneSection === "C") {
-      if (phoneC.length < 4) {
-        setPhoneC((prev) => (prev + d).slice(0, 4));
-      }
-    }
+    await AsyncStorage.setItem(AUTH_KEYS.accountId, nextId);
+    await AsyncStorage.setItem(AUTH_KEYS.accountPw, nextPw);
   };
-
-  const removeDigit = () => {
-    if (activePhoneSection === "C") {
-      if (phoneC.length > 0) {
-        setPhoneC((prev) => prev.slice(0, -1));
-        return;
-      }
-      setActivePhoneSection("B");
-      return;
-    }
-
-    if (activePhoneSection === "B") {
-      if (phoneB.length > 0) {
-        setPhoneB((prev) => prev.slice(0, -1));
-        return;
-      }
-      setActivePhoneSection("A");
-      return;
-    }
-
-    if (activePhoneSection === "A") {
-      if (phoneA.length > 0) {
-        setPhoneA((prev) => prev.slice(0, -1));
-      }
-    }
-  };
-
-  const onPhoneKeyPress = (key: string) => {
-    clearError("contact");
-
-    if (key === "Backspace") {
-      removeDigit();
-      return;
-    }
-
-    if (!/^[0-9]$/.test(key)) return;
-    appendDigit(key);
-  };
-
-  const handlePhonePress = (section?: PhoneSection) => {
-    const target = section ?? activePhoneSection;
-    focusPhone(target);
-  };
-
-  const cursorIndexA = phoneA.length;
-  const cursorIndexB = phoneB.length;
-  const cursorIndexC = phoneC.length;
 
   return (
     <LinearGradient colors={[COLORS.bgTop ?? COLORS.bg, COLORS.bgBottom ?? COLORS.bg]} style={{ flex: 1 }}>
@@ -473,19 +271,6 @@ export default function FindPasswordScreen() {
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.measureWrap}>
-            <Text
-              onLayout={(e) => {
-                const { width, height } = e.nativeEvent.layout;
-                if (width > 0) setDigitW(width);
-                if (height > 0) setDigitH(height);
-              }}
-              style={styles.measureText}
-            >
-              0
-            </Text>
-          </View>
-
           {step !== 6 ? (
             <View style={styles.hero}>
               <View style={styles.logoCircle}>
@@ -525,7 +310,14 @@ export default function FindPasswordScreen() {
 
                 {!!errors.userId && <Text style={styles.errorText}>{errors.userId}</Text>}
 
-                <Pressable style={styles.primaryBtn} onPress={onNext}>
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => {
+                    if (!validateStep1()) return;
+                    shouldAutoFocusRef.current = method === "phone" ? "contactPhone" : "contactEmail";
+                    setStep(2);
+                  }}
+                >
                   <Text style={styles.primaryBtnText}>다음</Text>
                 </Pressable>
               </View>
@@ -541,10 +333,12 @@ export default function FindPasswordScreen() {
                       onPress={() => {
                         setMethod("phone");
                         clearError("contact");
-                        setPhoneFocused(false);
+                        setTimeout(() => phoneInputRef.current?.focus(), 80);
                       }}
                     >
-                      <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>전화번호</Text>
+                      <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
+                        전화번호
+                      </Text>
                     </Pressable>
 
                     <Text style={styles.methodDivider}>|</Text>
@@ -555,66 +349,44 @@ export default function FindPasswordScreen() {
                       onPress={() => {
                         setMethod("email");
                         clearError("contact");
-                        setPhoneFocused(false);
                         setTimeout(() => emailRef.current?.focus(), 80);
                       }}
                     >
-                      <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>이메일</Text>
+                      <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>
+                        이메일
+                      </Text>
                     </Pressable>
                   </View>
 
                   {method === "phone" ? (
-                    <Pressable style={styles.phoneBox} onPress={() => handlePhonePress(activePhoneSection)}>
-                      <PhoneVisualSlot
-                        max={3}
-                        baseText={A_BASE}
-                        digits={phoneA}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "A"}
-                        cursorIndex={cursorIndexA}
-                        onPress={() => handlePhonePress("A")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={phoneB}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "B"}
-                        cursorIndex={cursorIndexB}
-                        onPress={() => handlePhonePress("B")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={phoneC}
-                        digitW={digitW}
-                        showCursor={phoneFocused && activePhoneSection === "C"}
-                        cursorIndex={cursorIndexC}
-                        onPress={() => handlePhonePress("C")}
-                      />
+                    <Pressable
+                      style={styles.phoneBox}
+                      onPress={() => {
+                        phoneInputRef.current?.focus();
+                        scrollToY(yContact);
+                      }}
+                    >
+                      <View style={styles.phoneDisplayRow}>
+                        {renderPhoneCell(phoneA, "000", 72)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneB, "0000", 88)}
+                        <Text style={styles.phoneHyphen}>-</Text>
+                        {renderPhoneCell(phoneC, "0000", 88)}
+                      </View>
 
                       <TextInput
                         ref={phoneInputRef}
                         style={styles.hiddenPhoneInput}
-                        value=""
-                        onChangeText={() => {}}
-                        onKeyPress={({ nativeEvent }) => onPhoneKeyPress(nativeEvent.key)}
-                        onFocus={() => {
-                          setPhoneFocused(true);
-                          scrollToY(yContact);
+                        value={phoneDigits}
+                        onChangeText={(t) => {
+                          setPhoneDigits(onlyDigits(t, 11));
+                          clearError("contact");
                         }}
-                        onBlur={() => setPhoneFocused(false)}
+                        onFocus={() => scrollToY(yContact)}
                         keyboardType="number-pad"
+                        maxLength={11}
+                        returnKeyType="done"
                         caretHidden
-                        contextMenuHidden
-                        autoCorrect={false}
-                        autoCapitalize="none"
                       />
                     </Pressable>
                   ) : (
@@ -647,7 +419,14 @@ export default function FindPasswordScreen() {
 
                 {!!errors.contact && <Text style={styles.errorText}>{errors.contact}</Text>}
 
-                <Pressable style={styles.primaryBtn} onPress={onNext}>
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => {
+                    if (!validateStep2()) return;
+                    shouldAutoFocusRef.current = "name";
+                    setStep(3);
+                  }}
+                >
                   <Text style={styles.primaryBtnText}>다음</Text>
                 </Pressable>
               </View>
@@ -673,7 +452,14 @@ export default function FindPasswordScreen() {
 
                 {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
 
-                <Pressable style={styles.primaryBtn} onPress={onNext}>
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => {
+                    if (!validateStep3()) return;
+                    shouldAutoFocusRef.current = "code";
+                    setStep(4);
+                  }}
+                >
                   <Text style={styles.primaryBtnText}>확인</Text>
                 </Pressable>
               </View>
@@ -701,7 +487,14 @@ export default function FindPasswordScreen() {
 
                 {!!errors.code && <Text style={styles.errorText}>{errors.code}</Text>}
 
-                <Pressable style={[styles.primaryBtn, { marginTop: 5 }]} onPress={onNext}>
+                <Pressable
+                  style={[styles.primaryBtn, { marginTop: 5 }]}
+                  onPress={() => {
+                    if (!validateStep4()) return;
+                    shouldAutoFocusRef.current = "pw";
+                    setStep(5);
+                  }}
+                >
                   <Text style={styles.primaryBtnText}>인증 완료</Text>
                 </Pressable>
               </View>
@@ -760,7 +553,14 @@ export default function FindPasswordScreen() {
 
                 {!!step5Error && <Text style={styles.errorTextPw}>{step5Error}</Text>}
 
-                <Pressable style={styles.primaryBtn} onPress={onNext}>
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={async () => {
+                    if (!validateStep5()) return;
+                    await saveNewPassword();
+                    setStep(6);
+                  }}
+                >
                   <Text style={styles.primaryBtnText}>변경 완료</Text>
                 </Pressable>
               </View>
@@ -796,20 +596,6 @@ const styles = StyleSheet.create({
   topTitle: { flex: 1, textAlign: "center", fontSize: 16, fontWeight: "900", color: "#111827" },
 
   body: { paddingHorizontal: 22, paddingBottom: 40 },
-
-  measureWrap: {
-    position: "absolute",
-    opacity: 0,
-    left: -9999,
-    top: -9999,
-  },
-  measureText: {
-    fontSize: 15,
-    fontWeight: "800",
-    letterSpacing: 0,
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-  },
 
   hero: { alignItems: "center", marginTop: 18, marginBottom: 14 },
   logoCircle: {
@@ -895,70 +681,41 @@ const styles = StyleSheet.create({
   phoneBox: {
     height: 54,
     paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#fff",
     position: "relative",
   },
-  phoneHyphen: {
-    width: 50,
-    textAlign: "center",
-    fontSize: 14,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.45)",
-    includeFontPadding: false,
-  },
-
-  slotWrap: {
-    position: "relative",
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  slotRow: {
+  phoneDisplayRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-start",
+    justifyContent: "center",
   },
-  slotOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
+  phoneCell: {
+    alignItems: "center",
+    justifyContent: "center",
   },
-  slotBaseChar: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#9CA3AF",
-    letterSpacing: 0,
-    textAlign: "center",
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-  },
-  slotTopChar: {
+  phoneCellText: {
     fontSize: 15,
     fontWeight: "800",
     color: "#111827",
-    letterSpacing: 0,
     textAlign: "center",
-    includeFontPadding: false,
-    fontVariant: Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
   },
-  charTransparent: { opacity: 0 },
-
-  slotCursor: {
-    position: "absolute",
-    top: 2,
-    width: 2,
-    height: 19,
-    borderRadius: 1,
-    backgroundColor: COLORS.primary,
+  phonePlaceholder: {
+    color: "#9CA3AF",
   },
-
+  phoneHyphen: {
+    marginHorizontal: 2,
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.45)",
+  },
   hiddenPhoneInput: {
     position: "absolute",
     opacity: 0,
-    width: 1,
-    height: 1,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 
   emailBox: {
