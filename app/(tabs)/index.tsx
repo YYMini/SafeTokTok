@@ -48,6 +48,8 @@ type Profile = {
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
@@ -194,7 +196,7 @@ function MapPlaceholder() {
     markersRef.current = [];
     overlaysRef.current = [];
 
-    targets.forEach((target, index) => {
+    targets.forEach((target) => {
       const position = new window.kakao.maps.LatLng(
         target.latitude,
         target.longitude,
@@ -204,7 +206,6 @@ function MapPlaceholder() {
         position,
         map: mapInstanceRef.current,
       });
-
       const content = `
         <div style="
           background: white;
@@ -232,7 +233,6 @@ function MapPlaceholder() {
       markersRef.current.push(marker);
       overlaysRef.current.push(overlay);
 
-      
     });
   };
   const getChildIdFromUrl = () => {
@@ -247,7 +247,7 @@ function MapPlaceholder() {
 
   const sendLocationToServer = async (lat: number, lng: number) => {
     try {
-      await fetch("http://localhost:8080/api/locations", {
+      const response = await fetch(`${API_BASE_URL}/api/locations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -258,6 +258,10 @@ function MapPlaceholder() {
           longitude: lng,
         }),
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
     } catch (error) {
       console.log("위치 전송 실패", error);
     }
@@ -265,9 +269,11 @@ function MapPlaceholder() {
 
   const fetchLatestLocations = async () => {
     try {
-      const response = await fetch(
-        "http://localhost:8080/api/locations/latest",
-      );
+      const response = await fetch(`${API_BASE_URL}/api/locations/latest`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.json();
 
       console.log("받은 latest 데이터", data);

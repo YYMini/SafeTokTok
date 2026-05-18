@@ -3,18 +3,25 @@ package safetoktok.backend.controller;
 import org.springframework.web.bind.annotation.*;
 import safetoktok.backend.dto.LocationRequest;
 import safetoktok.backend.dto.LocationResponse;
+import safetoktok.backend.entity.LocationEntity;
+import safetoktok.backend.repository.LocationRepository;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/locations")
 @CrossOrigin(origins = "*")
 public class LocationController {
 
-    private final Map<Long, LocationResponse> latestLocations = new HashMap<>();
+    private final LocationRepository locationRepository;
+
+    public LocationController(LocationRepository locationRepository) {
+        this.locationRepository = locationRepository;
+    }
 
     @PostMapping(produces = "application/json; charset=UTF-8")
     public Map<String, Object> saveLocation(@RequestBody LocationRequest request) {
@@ -29,14 +36,14 @@ public class LocationController {
             name = "알 수 없음";
         }
 
-        LocationResponse location = new LocationResponse(
+        LocationEntity location = new LocationEntity(
                 request.getChildId(),
                 name,
                 request.getLatitude(),
                 request.getLongitude()
         );
 
-        latestLocations.put(request.getChildId(), location);
+        locationRepository.save(location);
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -53,6 +60,19 @@ public class LocationController {
 
         merged.put(2L, new LocationResponse(2L, "김민준", 37.5612, 127.0081));
         merged.put(3L, new LocationResponse(3L, "박하린", 37.5584, 127.0049));
+
+        Map<Long, LocationResponse> latestLocations = locationRepository.findLatestLocationsByChild()
+                .stream()
+                .collect(Collectors.toMap(
+                        LocationEntity::getChildId,
+                        location -> new LocationResponse(
+                                location.getChildId(),
+                                location.getName(),
+                                location.getLatitude(),
+                                location.getLongitude()
+                        ),
+                        (first, second) -> second
+                ));
 
         merged.putAll(latestLocations);
 
