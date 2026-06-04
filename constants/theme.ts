@@ -68,3 +68,22 @@ export const colors = COLORS;
 export const radius = RADIUS;
 export const spacing = SPACING;
 export const shadow = SHADOW;
+
+export const Colors = {
+  light: {
+    text: COLORS.text,
+    background: COLORS.bg,
+    tint: COLORS.primary,
+    icon: COLORS.subText,
+    tabIconDefault: COLORS.mutedText,
+    tabIconSelected: COLORS.primary,
+  },
+  dark: {
+    text: "#FFFFFF",
+    background: "#111827",
+    tint: COLORS.primary,
+    icon: "rgba(255,255,255,0.72)",
+    tabIconDefault: "rgba(255,255,255,0.48)",
+    tabIconSelected: COLORS.primary,
+  },
+} as const;

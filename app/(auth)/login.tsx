@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 
+import { API_BASE_URL } from "../../constants/api";
 import { COLORS, SHADOW } from "../../constants/theme";
 import { useAuth } from "../_layout";
 
@@ -24,9 +25,21 @@ const STORAGE_KEYS = {
   isLoggedIn: "isLoggedIn",
   accountId: "authAccountId",
   accountPw: "authAccountPw",
+  currentUserId: "currentUserId",
+  currentUserRole: "currentUserRole",
+  profile: "profileData_v1",
 } as const;
 
 type ToastType = "error" | "success" | "none";
+
+type LoginResponse = {
+  id: number;
+  loginId: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role: "PARENT" | "CHILD";
+};
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -41,7 +54,6 @@ export default function LoginScreen() {
   const [toastText, setToastText] = useState("");
   const [toastType, setToastType] = useState<ToastType>("none");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const toastAnim = useRef(new Animated.Value(0)).current;
 
   const dismissToast = () => {
@@ -89,10 +101,8 @@ export default function LoginScreen() {
         setRememberMe(isRemember);
 
         if (isRemember) {
-          const savedId = (await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "";
-          const savedPw = (await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "";
-          setId(savedId);
-          setPw(savedPw);
+          setId((await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "");
+          setPw((await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "");
         }
       } catch {
         // ignore
@@ -104,58 +114,83 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const onFocusInput = () => {
-    if (toastVisible) dismissToast();
-  };
-
-  const normalized = useMemo(() => {
-    return {
+  const normalized = useMemo(
+    () => ({
       id: id.trim(),
       pw: pw.trim(),
-    };
-  }, [id, pw]);
+    }),
+    [id, pw],
+  );
+
+  const saveLoginState = async (loggedInUser: LoginResponse | null) => {
+    if (rememberMe) {
+      await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
+      await AsyncStorage.setItem(STORAGE_KEYS.savedId, normalized.id);
+      await AsyncStorage.setItem(STORAGE_KEYS.savedPw, normalized.pw);
+    } else {
+      await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
+      await AsyncStorage.removeItem(STORAGE_KEYS.savedId);
+      await AsyncStorage.removeItem(STORAGE_KEYS.savedPw);
+    }
+
+    await AsyncStorage.setItem(STORAGE_KEYS.isLoggedIn, "true");
+
+    if (!loggedInUser) return;
+
+    await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(loggedInUser.id));
+    await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, loggedInUser.role);
+    await AsyncStorage.setItem(STORAGE_KEYS.accountId, loggedInUser.loginId);
+    await AsyncStorage.setItem(STORAGE_KEYS.accountPw, normalized.pw);
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.profile,
+      JSON.stringify({
+        name: loggedInUser.name,
+        userId: loggedInUser.loginId,
+        email: loggedInUser.email ?? "",
+        phone: loggedInUser.phone ?? "010-0000-0000",
+        imageUri: null,
+        role: loggedInUser.role,
+      }),
+    );
+  };
 
   const onSubmit = async () => {
     Keyboard.dismiss();
 
     if (!normalized.id || !normalized.pw) {
-      showToast("error", "아이디 및 비밀번호를 입력해주세요");
+      showToast("error", "아이디와 비밀번호를 입력해주세요");
       return;
     }
 
-    let accountId = "";
-    let accountPw = "";
+    let loggedInUser: LoginResponse | null = null;
 
     try {
-      accountId = (await AsyncStorage.getItem(STORAGE_KEYS.accountId)) ?? "";
-      accountPw = (await AsyncStorage.getItem(STORAGE_KEYS.accountPw)) ?? "";
-    } catch {
-      // ignore
-    }
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          loginId: normalized.id,
+          password: normalized.pw,
+        }),
+      });
 
-    // 회원가입된 계정이 없으면 로그인 불가
-    if (!accountId || !accountPw) {
-      showToast("error", "회원가입 후 로그인해주세요");
-      return;
-    }
-
-    const ok = normalized.id === accountId && normalized.pw === accountPw;
-    if (!ok) {
-      showToast("error", "아이디 및 비밀번호가 틀렸습니다");
-      return;
-    }
-
-    try {
-      if (rememberMe) {
-        await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
-        await AsyncStorage.setItem(STORAGE_KEYS.savedId, normalized.id);
-        await AsyncStorage.setItem(STORAGE_KEYS.savedPw, normalized.pw);
-      } else {
-        await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
-        await AsyncStorage.removeItem(STORAGE_KEYS.savedId);
-        await AsyncStorage.removeItem(STORAGE_KEYS.savedPw);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-      await AsyncStorage.setItem(STORAGE_KEYS.isLoggedIn, "true");
+
+      loggedInUser = (await response.json()) as LoginResponse;
+    } catch (error) {
+      console.log("백엔드 로그인 실패", error);
+      showToast("error", "아이디 또는 비밀번호가 올바르지 않습니다");
+      await AsyncStorage.removeItem(STORAGE_KEYS.currentUserId);
+      await AsyncStorage.removeItem(STORAGE_KEYS.currentUserRole);
+      return;
+    }
+
+    try {
+      await saveLoginState(loggedInUser);
     } catch {
       // ignore
     }
@@ -172,14 +207,13 @@ export default function LoginScreen() {
     const isError = toastType === "error";
     const isSuccess = toastType === "success";
 
-    const iconName = isError ? "alert-circle" : isSuccess ? "checkmark-circle" : "information-circle";
-    const iconColor = isError ? COLORS.danger : isSuccess ? COLORS.success : COLORS.text;
-
-    const bg = isError ? "rgba(255, 235, 235, 0.92)" : "rgba(235, 255, 243, 0.92)";
-    const border = isError ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)";
-    const textColor = isError ? "#B91C1C" : "#047857";
-
-    return { iconName, iconColor, bg, border, textColor };
+    return {
+      iconName: isError ? "alert-circle" : isSuccess ? "checkmark-circle" : "information-circle",
+      iconColor: isError ? COLORS.danger : isSuccess ? COLORS.success : COLORS.text,
+      bg: isError ? "rgba(255, 235, 235, 0.92)" : "rgba(235, 255, 243, 0.92)",
+      border: isError ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)",
+      textColor: isError ? "#B91C1C" : "#047857",
+    };
   }, [toastType]);
 
   return (
@@ -220,7 +254,7 @@ export default function LoginScreen() {
             <Ionicons name="shield-checkmark" size={26} color={COLORS.primary} />
           </View>
           <Text style={styles.brand}>안심톡톡</Text>
-          <Text style={styles.slogan}>우리 아이의 안전한 동행</Text>
+          <Text style={styles.slogan}>우리 아이 안전 동행</Text>
         </View>
 
         <View style={styles.card}>
@@ -228,11 +262,10 @@ export default function LoginScreen() {
             placeholder="아이디"
             placeholderTextColor="#9CA3AF"
             value={id}
-            onChangeText={(t) => {
+            onChangeText={(text) => {
               if (toastVisible) dismissToast();
-              setId(t);
+              setId(text);
             }}
-            onFocus={onFocusInput}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.input}
@@ -244,11 +277,10 @@ export default function LoginScreen() {
               placeholder="비밀번호"
               placeholderTextColor="#9CA3AF"
               value={pw}
-              onChangeText={(t) => {
+              onChangeText={(text) => {
                 if (toastVisible) dismissToast();
-                setPw(t);
+                setPw(text);
               }}
-              onFocus={onFocusInput}
               secureTextEntry={!showPw}
               autoCapitalize="none"
               autoCorrect={false}
@@ -298,7 +330,6 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-
   container: {
     flex: 1,
     paddingHorizontal: 22,
@@ -306,7 +337,6 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
     justifyContent: "flex-start",
   },
-
   toastWrap: {
     position: "absolute",
     top: Platform.select({ ios: 56, android: 44, default: 44 }),
@@ -334,7 +364,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 18,
   },
-
   logoWrap: { alignItems: "center", marginBottom: 18 },
   logoCircle: {
     width: 74,
@@ -349,7 +378,6 @@ const styles = StyleSheet.create({
   },
   brand: { fontSize: 26, color: COLORS.primary, fontWeight: "900" },
   slogan: { marginTop: 10, fontSize: 14, color: "rgba(17,24,39,0.55)", fontWeight: "700" },
-
   card: {
     alignSelf: "center",
     width: "100%",
@@ -359,7 +387,6 @@ const styles = StyleSheet.create({
     padding: 16,
     ...SHADOW.card,
   },
-
   input: {
     height: 54,
     backgroundColor: "#fff",
@@ -371,11 +398,9 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 12,
   },
-
   pwRow: { position: "relative", justifyContent: "center", marginTop: -1, marginBottom: -1 },
   pwInput: { paddingRight: 48 },
   eyeBtn: { position: "absolute", right: 12, height: 54, justifyContent: "center", top: 0 },
-
   optionsRow: {
     marginTop: 2,
     flexDirection: "row",
@@ -383,7 +408,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 14,
   },
-
   rememberRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   checkbox: {
     width: 18,
@@ -396,16 +420,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginLeft: 5,
     marginRight: -2,
-    position: "relative",
   },
-
   checkboxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   rememberText: { fontSize: 14, fontWeight: "800", color: "#111827" },
-
   findRow: { flexDirection: "row", alignItems: "center", marginRight: 3 },
   findText: { fontSize: 12, fontWeight: "800", color: "rgba(17,24,39,0.55)" },
   divider: { fontSize: 12, fontWeight: "900", color: "rgba(17,24,39,0.25)", marginHorizontal: 6 },
-
   loginBtn: {
     height: 53,
     borderRadius: 18,
@@ -416,9 +436,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   loginBtnText: { color: "#fff", fontSize: 17, fontWeight: "900" },
-
   signupBtn: { marginTop: 23, alignItems: "center", marginBottom: 5 },
   signupText: { fontSize: 16, fontWeight: "900", color: "rgba(17,24,39,0.50)" },
-
   footer: { marginTop: 20, textAlign: "center", color: "rgba(17,24,39,0.35)", fontWeight: "700" },
 });

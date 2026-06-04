@@ -1,9 +1,11 @@
 // app/(tabs)/index.tsx
 import Header from "@/components/Header";
+import { API_BASE_URL, isUsingLocalApiBaseUrl } from "@/constants/api";
 import { COLORS, RADIUS, SHADOW } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
@@ -24,6 +26,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { WebView } from "react-native-webview";
 
 declare global {
   interface Window {
@@ -35,6 +38,10 @@ type Target = {
   id: string;
   name: string;
   sub: string;
+  age?: number;
+  loginId?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 type Profile = {
@@ -43,14 +50,38 @@ type Profile = {
   email: string;
   phone: string;
   imageUri: string | null;
+  role?: "PARENT" | "CHILD" | "guardian" | "user";
+};
+
+type ChildApiResponse = {
+  childId: number;
+  name: string;
+  age?: number | null;
+  loginId?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+type ConnectionApiResponse = {
+  id: number;
+  name: string;
+  age?: number | null;
+  loginId?: string;
+  role: "PARENT" | "CHILD";
+};
+
+type ChildDraft = {
+  name: string;
+  age: string;
+  loginId: string;
+  password: string;
 };
 
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
-
+const CURRENT_USER_ID_KEY = "currentUserId";
+const CURRENT_USER_ROLE_KEY = "currentUserRole";
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
   userId: "admin",
@@ -59,10 +90,7 @@ const DEFAULT_PROFILE: Profile = {
   imageUri: null,
 };
 
-const DEFAULT_TARGETS: Target[] = [
-  { id: "m1", name: "김민준", sub: "7세 · 자녀" },
-  { id: "s1", name: "이서윤", sub: "5세 · 자녀" },
-];
+const DEFAULT_TARGETS: Target[] = [];
 
 type FieldErrors = {
   userId?: string;
@@ -79,14 +107,32 @@ export default function TrackingDashboard() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [linkedTargets, setLinkedTargets] = useState<Target[]>(DEFAULT_TARGETS);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [savedProfile, savedTargets] = await Promise.all([
+        const [savedProfile, savedUserId, savedRole] = await Promise.all([
           AsyncStorage.getItem(PROFILE_KEY),
-          AsyncStorage.getItem(TARGETS_KEY),
+          AsyncStorage.getItem(CURRENT_USER_ID_KEY),
+          AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
         ]);
+
+        if (savedUserId) {
+          const parsedUserId = Number(savedUserId);
+          if (!Number.isNaN(parsedUserId)) {
+            setCurrentUserId(parsedUserId);
+          }
+        }
+
+        if (savedRole) {
+          setCurrentUserRole(savedRole);
+          if (savedRole === "CHILD") {
+            setLinkedTargets([]);
+            await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify([]));
+          }
+        }
 
         if (savedProfile) {
           const parsed = JSON.parse(savedProfile) as Partial<Profile>;
@@ -98,17 +144,159 @@ export default function TrackingDashboard() {
           });
         }
 
-        if (savedTargets) {
-          const parsedTargets = JSON.parse(savedTargets) as Target[];
-          if (Array.isArray(parsedTargets)) {
-            setLinkedTargets(parsedTargets);
-          }
-        }
+        setLinkedTargets([]);
       } catch {
         // ignore
       }
     })();
   }, []);
+
+  const toTarget = (child: ChildApiResponse): Target => ({
+    id: String(child.childId),
+    name: child.name,
+    sub: `${child.age ?? "-"}세 자녀`,
+    age: child.age ?? undefined,
+    loginId: child.loginId,
+    latitude: child.latitude,
+    longitude: child.longitude,
+  });
+
+  const toConnectionTarget = (connection: ConnectionApiResponse): Target => ({
+    id: `${connection.role}-${connection.id}`,
+    name: connection.name,
+    sub:
+      connection.role === "PARENT"
+        ? "부모"
+        : `${connection.age ?? "-"}세 자녀`,
+    age: connection.age ?? undefined,
+    loginId: connection.loginId,
+  });
+
+  const fetchChildren = async (parentId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/children`, {
+      headers: {
+        "X-User-Id": String(parentId),
+        "X-Login-Id": profile.userId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as ChildApiResponse[];
+    if (Array.isArray(data)) {
+      await saveTargets(data.map(toTarget));
+    }
+  };
+
+  const fetchConnections = async (userId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/children/connections`, {
+      headers: {
+        "X-User-Id": String(userId),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as ConnectionApiResponse[];
+    if (Array.isArray(data)) {
+      await saveTargets(data.map(toConnectionTarget));
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUserId || currentUserRole !== "PARENT") return;
+
+    fetchChildren(currentUserId).catch((error) => {
+      console.log("자녀 목록 조회 실패", error);
+    });
+  }, [currentUserId, currentUserRole, profile.userId]);
+
+  useEffect(() => {
+    if (!currentUserId || currentUserRole !== "CHILD") return;
+
+    fetchConnections(currentUserId).catch((error) => {
+      console.log("연결 대상자 조회 실패", error);
+      saveTargets([]).catch(() => {
+        // ignore
+      });
+    });
+  }, [currentUserId, currentUserRole]);
+
+  const addChild = async (child: ChildDraft): Promise<Target> => {
+    if (!currentUserId && !profile.userId) {
+      Alert.alert("자녀 추가 실패", "로그인 사용자 정보를 찾을 수 없습니다.");
+      throw new Error("Missing current user id");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/children`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(currentUserId ? { "X-User-Id": String(currentUserId) } : {}),
+        "X-Login-Id": profile.userId,
+      },
+      body: JSON.stringify({
+        name: child.name.trim(),
+        age: Number(child.age),
+        loginId: child.loginId.trim(),
+        password: child.password,
+      }),
+    });
+
+    if (!response.ok) {
+      let message = `자녀 추가에 실패했습니다. (HTTP ${response.status})`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.message === "string") {
+          message = errorBody.message;
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+
+    const created = (await response.json()) as ChildApiResponse;
+    const createdTarget = toTarget(created);
+    const nextTargets = [...linkedTargets, createdTarget];
+    await saveTargets(nextTargets);
+    return createdTarget;
+  };
+
+  const deleteChild = async (target: Target) => {
+    const childId = Number(target.id);
+    if (!Number.isFinite(childId)) {
+      throw new Error("삭제할 자녀 정보를 확인할 수 없습니다.");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/children/${childId}`, {
+      method: "DELETE",
+      headers: {
+        ...(currentUserId ? { "X-User-Id": String(currentUserId) } : {}),
+        "X-Login-Id": profile.userId,
+      },
+    });
+
+    if (!response.ok) {
+      let message = `자녀 삭제에 실패했습니다. (HTTP ${response.status})`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.message === "string") {
+          message = errorBody.message;
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+
+    const nextTargets = linkedTargets.filter((item) => item.id !== target.id);
+    await saveTargets(nextTargets);
+  };
 
   const saveProfile = async (next: Profile) => {
     setProfile(next);
@@ -131,6 +319,8 @@ export default function TrackingDashboard() {
   const logout = async () => {
     try {
       await AsyncStorage.setItem(LOGIN_KEY, "false");
+      await AsyncStorage.removeItem(CURRENT_USER_ID_KEY);
+      await AsyncStorage.removeItem(CURRENT_USER_ROLE_KEY);
     } catch {
       // ignore
     }
@@ -153,7 +343,7 @@ export default function TrackingDashboard() {
       </View>
 
       <View style={styles.body}>
-        <MapPlaceholder />
+        <MapPlaceholder currentUserId={currentUserId} currentUserRole={currentUserRole} />
       </View>
 
       <ProfileModal
@@ -163,6 +353,9 @@ export default function TrackingDashboard() {
         profile={profile}
         onSaveProfile={saveProfile}
         onSaveTargets={saveTargets}
+        onAddChild={addChild}
+        onDeleteChild={deleteChild}
+        canManageChildren={currentUserRole === "PARENT"}
         onPressSave={() => setProfileOpen(false)}
         onPressLogout={logout}
       />
@@ -170,15 +363,118 @@ export default function TrackingDashboard() {
   );
 }
 
-function MapPlaceholder() {
+function MapPlaceholder({
+  currentUserId,
+  currentUserRole,
+}: {
+  currentUserId: number | null;
+  currentUserRole: string | null;
+}) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
+  const mobileWebViewRef = useRef<WebView>(null);
   const markersRef = useRef<any[]>([]);
   const overlaysRef = useRef<any[]>([]);
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<number | null>(null);
+  const latestUserIdRef = useRef<number | null>(currentUserId);
+  const latestUserRoleRef = useRef<string | null>(currentUserRole);
+  const hasRenderedMarkersRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
+
+  const mobileMapHtml = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <style>
+          html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
+        </style>
+        <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=d74e3a0d741775a29ef17516bf90fe89&autoload=false"></script>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          var map;
+          var markers = [];
+          var overlays = [];
+
+          function clearMarkers() {
+            markers.forEach(function(marker) { marker.setMap(null); });
+            overlays.forEach(function(overlay) { overlay.setMap(null); });
+            markers = [];
+            overlays = [];
+          }
+
+          function escapeHtml(value) {
+            return String(value || '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#39;');
+          }
+
+          function renderTargets(targets) {
+            if (!map || !Array.isArray(targets)) return;
+            if (targets.length === 0 && markers.length > 0) return;
+            clearMarkers();
+
+            var bounds = new kakao.maps.LatLngBounds();
+
+            targets.forEach(function(target) {
+              var position = new kakao.maps.LatLng(target.latitude, target.longitude);
+              var marker = new kakao.maps.Marker({ position: position, map: map });
+              var overlay = new kakao.maps.CustomOverlay({
+                position: position,
+                yAnchor: 2.2,
+                content: '<div style="background:white;border:1px solid #2563eb;border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:#2563eb;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
+              });
+              overlay.setMap(map);
+              markers.push(marker);
+              overlays.push(overlay);
+              bounds.extend(position);
+            });
+
+            if (targets.length === 1) {
+              map.setCenter(bounds.getSouthWest());
+              map.setLevel(3);
+            } else if (targets.length > 1) {
+              map.setBounds(bounds);
+            }
+          }
+
+          document.addEventListener('message', function(event) {
+            try {
+              var payload = JSON.parse(event.data);
+              if (payload.type === 'markers') renderTargets(payload.targets);
+            } catch (e) {}
+          });
+
+          window.addEventListener('message', function(event) {
+            try {
+              var payload = JSON.parse(event.data);
+              if (payload.type === 'markers') renderTargets(payload.targets);
+            } catch (e) {}
+          });
+
+          kakao.maps.load(function() {
+            map = new kakao.maps.Map(document.getElementById('map'), {
+              center: new kakao.maps.LatLng(37.5665, 126.9780),
+              level: 3
+            });
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+          });
+        </script>
+      </body>
+    </html>
+  `;
+
+  useEffect(() => {
+    latestUserIdRef.current = currentUserId;
+    latestUserRoleRef.current = currentUserRole;
+  }, [currentUserId, currentUserRole]);
 
   const renderMarkers = (
     targets: {
@@ -196,11 +492,51 @@ function MapPlaceholder() {
     markersRef.current = [];
     overlaysRef.current = [];
 
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const groups = new Map<
+      string,
+      {
+        latitude: number;
+        longitude: number;
+        targets: typeof targets;
+      }
+    >();
+
     targets.forEach((target) => {
+      const key = `${target.latitude.toFixed(4)},${target.longitude.toFixed(4)}`;
+      const group = groups.get(key);
+      if (group) {
+        const nextCount = group.targets.length + 1;
+        group.latitude =
+          (group.latitude * group.targets.length + target.latitude) / nextCount;
+        group.longitude =
+          (group.longitude * group.targets.length + target.longitude) / nextCount;
+        group.targets.push(target);
+      } else {
+        groups.set(key, {
+          latitude: target.latitude,
+          longitude: target.longitude,
+          targets: [target],
+        });
+      }
+    });
+
+    groups.forEach((group) => {
       const position = new window.kakao.maps.LatLng(
-        target.latitude,
-        target.longitude,
+        group.latitude,
+        group.longitude,
       );
+      const isGroup = group.targets.length > 1;
+      const labelText = isGroup
+        ? `${group.targets.length}명`
+        : escapeHtml(group.targets[0].name);
 
       const marker = new window.kakao.maps.Marker({
         position,
@@ -218,7 +554,7 @@ function MapPlaceholder() {
           white-space: nowrap;
           box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         ">
-          ${target.name}
+          ${labelText}
         </div>
       `;
 
@@ -230,10 +566,65 @@ function MapPlaceholder() {
 
       overlay.setMap(mapInstanceRef.current);
 
+      if (isGroup) {
+        const names = group.targets
+          .map((target) => `<li style="padding:2px 0;">${escapeHtml(target.name)}</li>`)
+          .join("");
+        const popup = new window.kakao.maps.CustomOverlay({
+          position,
+          yAnchor: 1.75,
+          zIndex: 4,
+          content: `
+            <div style="
+              min-width: 120px;
+              background: white;
+              border: 1px solid rgba(37,99,235,0.35);
+              border-radius: 12px;
+              padding: 8px 10px;
+              box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+              font-size: 12px;
+              color: #111827;
+            ">
+              <div style="font-weight: 800; color: #2563eb; margin-bottom: 4px;">이 위치의 대상자</div>
+              <ul style="list-style:none; margin:0; padding:0;">${names}</ul>
+            </div>
+          `,
+        });
+
+        window.kakao.maps.event.addListener(marker, "click", () => {
+          const isOpen = overlaysRef.current.includes(popup);
+          overlaysRef.current
+            .filter((item) => item.__groupPopup)
+            .forEach((item) => item.setMap(null));
+          overlaysRef.current = overlaysRef.current.filter((item) => !item.__groupPopup);
+
+          if (!isOpen) {
+            popup.__groupPopup = true;
+            popup.setMap(mapInstanceRef.current);
+            overlaysRef.current.push(popup);
+          }
+        });
+      }
+
       markersRef.current.push(marker);
       overlaysRef.current.push(overlay);
-
     });
+  };
+
+  const renderMobileMarkers = (
+    targets: {
+      childId: number;
+      name: string;
+      latitude: number;
+      longitude: number;
+    }[],
+  ) => {
+    mobileWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "markers",
+        targets,
+      }),
+    );
   };
   const getChildIdFromUrl = () => {
     if (Platform.OS !== "web") return 1;
@@ -245,31 +636,96 @@ function MapPlaceholder() {
 
   const childId = getChildIdFromUrl();
 
+  const isLocalHostname = (hostname: string) =>
+    ["localhost", "127.0.0.1", "::1"].includes(hostname);
+
+  const getApiAddressHint = () => {
+    const apiUrl = API_BASE_URL.toLowerCase();
+
+    if (
+      Platform.OS === "web" &&
+      isUsingLocalApiBaseUrl() &&
+      !isLocalHostname(window.location.hostname)
+    ) {
+      return "현재 API 주소가 localhost라서 이 화면에서는 백엔드에 연결할 수 없습니다. .env에 EXPO_PUBLIC_API_BASE_URL을 Railway 백엔드 주소로 설정해주세요.";
+    }
+
+    return "백엔드 서버 주소와 Railway 배포 상태를 확인해주세요.";
+  };
+
+  const getGeolocationErrorMessage = (err: GeolocationPositionError) => {
+    if (err.code === err.PERMISSION_DENIED) {
+      return "위치 권한이 거부되었습니다. 브라우저 주소창의 위치 권한을 허용해주세요.";
+    }
+
+    if (err.code === err.POSITION_UNAVAILABLE) {
+      return "현재 기기에서 위치를 계산하지 못했습니다. GPS/Wi-Fi 위치 서비스를 켠 뒤 다시 시도해주세요.";
+    }
+
+    if (err.code === err.TIMEOUT) {
+      return "위치 정보를 가져오는 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.";
+    }
+
+    return `위치 정보를 가져오지 못했습니다. (${err.message})`;
+  };
+
   const sendLocationToServer = async (lat: number, lng: number) => {
     try {
+      if (!currentUserId || currentUserRole !== "CHILD") {
+        return false;
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/locations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-User-Id": String(currentUserId),
         },
         body: JSON.stringify({
-          childId,
+          childId: currentUserId,
           latitude: lat,
           longitude: lng,
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        let message = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody?.message === "string") {
+            message = errorBody.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
       }
+
+      setErrorText("");
+      return true;
     } catch (error) {
-      console.log("위치 전송 실패", error);
+      console.log("위치 저장 실패", error);
+      setErrorText(
+        error instanceof Error
+          ? `위치 저장 실패: ${error.message}`
+          : `위치 저장 실패: ${getApiAddressHint()}`,
+      );
+      return false;
     }
   };
 
   const fetchLatestLocations = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/locations/latest`);
+      const userId = latestUserIdRef.current;
+      if (!userId) {
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/locations/latest`, {
+        headers: {
+          "X-User-Id": String(userId),
+        },
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -279,18 +735,112 @@ function MapPlaceholder() {
       console.log("받은 latest 데이터", data);
 
       if (Array.isArray(data) && data.length > 0) {
-        renderMarkers(data);
+        if (Platform.OS === "web") {
+          renderMarkers(data);
+        } else {
+          renderMobileMarkers(data);
+        }
+        hasRenderedMarkersRef.current = true;
+        setIsReady(true);
+      } else if (!hasRenderedMarkersRef.current) {
         setIsReady(true);
       }
     } catch (error) {
       console.log("최신 위치 조회 실패", error);
+      setErrorText(`최신 위치 조회 실패: ${getApiAddressHint()}`);
     }
   };
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
+    if (!currentUserId || !mapInstanceRef.current) return;
+
+    fetchLatestLocations();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (!currentUserId) return;
+
+    let locationSubscription: Location.LocationSubscription | null = null;
+    let latestInterval: ReturnType<typeof setInterval> | null = null;
+    let isMounted = true;
+
+    const startMobileMap = async () => {
+      await fetchLatestLocations();
+
+      latestInterval = setInterval(() => {
+        fetchLatestLocations();
+      }, 3000);
+
+      if (currentUserRole !== "CHILD") {
+        setIsReady(true);
+        return;
+      }
+
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setErrorText("위치 권한이 필요합니다. 휴대폰 설정에서 위치 권한을 허용해주세요.");
+        setIsReady(true);
+        return;
+      }
+
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      if (!isMounted) return;
+
+      await sendLocationToServer(
+        current.coords.latitude,
+        current.coords.longitude,
+      );
+      await fetchLatestLocations();
+      setIsReady(true);
+
+      locationSubscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 3000,
+          distanceInterval: 3,
+        },
+        (location) => {
+          sendLocationToServer(
+            location.coords.latitude,
+            location.coords.longitude,
+          );
+        },
+      );
+    };
+
+    startMobileMap().catch((error) => {
+      console.log("모바일 지도 초기화 실패", error);
+      setErrorText("모바일 지도를 초기화하지 못했습니다.");
+      setIsReady(true);
+    });
+
+    return () => {
+      isMounted = false;
+      locationSubscription?.remove();
+      if (latestInterval) {
+        clearInterval(latestInterval);
+      }
+    };
+  }, [currentUserId, currentUserRole]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
 
     const startGeolocation = () => {
+      if (
+        !window.isSecureContext &&
+        !isLocalHostname(window.location.hostname)
+      ) {
+        setErrorText(
+          "브라우저 위치 정보는 HTTPS 또는 localhost에서만 작동합니다. Expo Web은 localhost로 열거나 HTTPS 배포 주소에서 실행해주세요.",
+        );
+        return;
+      }
+
       if (!navigator.geolocation) {
         setErrorText("이 브라우저는 위치 정보를 지원하지 않습니다.");
         return;
@@ -299,12 +849,17 @@ function MapPlaceholder() {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          await sendLocationToServer(latitude, longitude);
+          if (
+            latestUserRoleRef.current === "CHILD" &&
+            latestUserIdRef.current
+          ) {
+            await sendLocationToServer(latitude, longitude);
+          }
           await fetchLatestLocations();
           setIsReady(true);
         },
         (err) => {
-          setErrorText(`현재 위치를 가져오지 못했습니다. (${err.message})`);
+          setErrorText(getGeolocationErrorMessage(err));
         },
         {
           enableHighAccuracy: true,
@@ -313,20 +868,25 @@ function MapPlaceholder() {
         },
       );
 
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const { latitude, longitude } = pos.coords;
-          await sendLocationToServer(latitude, longitude);
-        },
-        (err) => {
-          setErrorText(`위치 추적 실패: ${err.message}`);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 3000,
-        },
-      );
+      if (
+        latestUserRoleRef.current === "CHILD" &&
+        latestUserIdRef.current
+      ) {
+        watchIdRef.current = navigator.geolocation.watchPosition(
+          async (pos) => {
+            const { latitude, longitude } = pos.coords;
+            await sendLocationToServer(latitude, longitude);
+          },
+          (err) => {
+            setErrorText(getGeolocationErrorMessage(err));
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 3000,
+          },
+        );
+      }
     };
 
     const initMap = () => {
@@ -384,14 +944,61 @@ function MapPlaceholder() {
         clearInterval(intervalIdRef.current);
       }
     };
-  }, []);
+  }, [currentUserId, currentUserRole]);
 
   if (Platform.OS !== "web") {
     return (
-      <View
-        style={[styles.map, { justifyContent: "center", alignItems: "center" }]}
-      >
-        <Text>카카오맵은 현재 web에서 테스트 중입니다.</Text>
+      <View style={styles.map}>
+        {!isReady && !errorText && (
+          <ActivityIndicator
+            size="large"
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              marginLeft: -18,
+              marginTop: -18,
+              zIndex: 2,
+            }}
+          />
+        )}
+
+        {!!errorText && (
+          <View
+            style={{
+              position: "absolute",
+              top: 16,
+              left: 16,
+              right: 16,
+              zIndex: 3,
+              backgroundColor: "white",
+              padding: 12,
+              borderRadius: 12,
+            }}
+          >
+            <Text>{errorText}</Text>
+          </View>
+        )}
+
+        <WebView
+          ref={mobileWebViewRef}
+          source={{ html: mobileMapHtml }}
+          originWhitelist={["*"]}
+          javaScriptEnabled
+          domStorageEnabled
+          mixedContentMode="always"
+          onMessage={(event) => {
+            try {
+              const payload = JSON.parse(event.nativeEvent.data);
+              if (payload.type === "ready") {
+                fetchLatestLocations();
+              }
+            } catch {
+              // ignore
+            }
+          }}
+          style={{ flex: 1, backgroundColor: "#DCEEFF" }}
+        />
       </View>
     );
   }
@@ -583,6 +1190,9 @@ function ProfileModal({
   profile,
   onSaveProfile,
   onSaveTargets,
+  onAddChild,
+  onDeleteChild,
+  canManageChildren,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -592,11 +1202,26 @@ function ProfileModal({
   profile: Profile;
   onSaveProfile: (p: Profile) => Promise<void> | void;
   onSaveTargets: (targets: Target[]) => Promise<void> | void;
+  onAddChild: (child: ChildDraft) => Promise<Target>;
+  onDeleteChild: (target: Target) => Promise<void>;
+  canManageChildren: boolean;
 }) {
   const [draft, setDraft] = useState<Profile>(profile);
   const [draftTargets, setDraftTargets] = useState<Target[]>(linkedTargets);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [tooltipField, setTooltipField] = useState<TooltipField>(null);
+  const [childModalOpen, setChildModalOpen] = useState(false);
+  const [childDraft, setChildDraft] = useState<ChildDraft>({
+    name: "",
+    age: "",
+    loginId: "",
+    password: "",
+  });
+  const [childError, setChildError] = useState("");
+  const [addingChild, setAddingChild] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Target | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deletingChild, setDeletingChild] = useState(false);
 
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -745,6 +1370,9 @@ function ProfileModal({
     setTooltipField(null);
     setEditingName(false);
     setEditingKey(null);
+    setChildModalOpen(false);
+    setChildDraft({ name: "", age: "", loginId: "", password: "" });
+    setChildError("");
     Keyboard.dismiss();
 
     setUserIdSelection({
@@ -765,6 +1393,14 @@ function ProfileModal({
       clearTooltipTimer();
     };
   }, []);
+
+  useEffect(() => {
+    if (!childModalOpen) return;
+
+    setChildDraft({ name: "", age: "", loginId: "", password: "" });
+    setChildError("");
+    setAddingChild(false);
+  }, [childModalOpen]);
 
   const endEditing = () => {
     Keyboard.dismiss();
@@ -986,6 +1622,105 @@ function ProfileModal({
     ]);
   };
 
+  const changeChildDraft = (key: keyof ChildDraft, value: string) => {
+    setChildDraft((prev) => ({ ...prev, [key]: value }));
+    setChildError("");
+  };
+
+  const openDeleteChildModal = (target: Target) => {
+    hideKeyboardAndTooltip();
+    setDeleteError("");
+    setDeleteTarget(target);
+  };
+
+  const closeDeleteChildModal = () => {
+    if (deletingChild) return;
+    setDeleteTarget(null);
+    setDeleteError("");
+  };
+
+  const submitDeleteChild = async () => {
+    if (!deleteTarget) return;
+
+    setDeletingChild(true);
+    setDeleteError("");
+    try {
+      await onDeleteChild(deleteTarget);
+      setDraftTargets((prev) => prev.filter((t) => t.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "자녀 계정을 삭제하지 못했습니다.",
+      );
+    } finally {
+      setDeletingChild(false);
+    }
+  };
+
+  const confirmDeleteChild = (target: Target) => {
+    hideKeyboardAndTooltip();
+    Alert.alert("회원 탈퇴", "회원 탈퇴하시겠습니까?", [
+      { text: "아니오", style: "cancel" },
+      {
+        text: "예",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await onDeleteChild(target);
+            setDraftTargets((prev) => prev.filter((t) => t.id !== target.id));
+          } catch (error) {
+            Alert.alert(
+              "삭제 실패",
+              error instanceof Error
+                ? error.message
+                : "자녀 계정을 삭제하지 못했습니다.",
+            );
+          }
+        },
+      },
+    ]);
+  };
+
+  const submitChild = async () => {
+    const trimmed = {
+      name: childDraft.name.trim(),
+      age: childDraft.age.trim(),
+      loginId: childDraft.loginId.trim(),
+      password: childDraft.password,
+    };
+
+    if (!trimmed.name || !trimmed.age || !trimmed.loginId || !trimmed.password) {
+      setChildError("자녀 이름, 나이, 아이디, 비밀번호를 모두 입력해주세요.");
+      return;
+    }
+
+    const ageNumber = Number(trimmed.age);
+    if (!Number.isInteger(ageNumber) || ageNumber <= 0) {
+      setChildError("나이는 숫자로 입력해주세요.");
+      return;
+    }
+
+    setAddingChild(true);
+    try {
+      const created = await onAddChild(trimmed);
+      setDraftTargets((prev) => [...prev, created]);
+      setChildDraft({ name: "", age: "", loginId: "", password: "" });
+      setChildError("");
+      setChildModalOpen(false);
+    } catch (error) {
+      console.log("자녀 추가 실패", error);
+      setChildError(
+        error instanceof Error
+          ? error.message
+          : "자녀 추가에 실패했습니다. 서버 상태를 확인해주세요.",
+      );
+    } finally {
+      setAddingChild(false);
+    }
+  };
+
   const onSave = async () => {
     const isValid = validateAll();
     if (!isValid) return;
@@ -1010,6 +1745,7 @@ function ProfileModal({
   };
 
   return (
+    <>
     <Modal
       visible={visible}
       transparent
@@ -1385,17 +2121,22 @@ function ProfileModal({
                           <Text style={styles.targetSub}>{t.sub}</Text>
                         </View>
 
-                        <Pressable
-                          onPress={() => confirmRemoveDraftTarget(t)}
-                          style={styles.trashBtn}
-                          hitSlop={10}
-                        >
-                          <Ionicons
-                            name="trash"
-                            size={18}
-                            color={COLORS.danger}
-                          />
-                        </Pressable>
+                        {canManageChildren && (
+                          <Pressable
+                            onPress={(event) => {
+                              event.stopPropagation?.();
+                              openDeleteChildModal(t);
+                            }}
+                            style={styles.trashBtn}
+                            hitSlop={10}
+                          >
+                            <Ionicons
+                              name="trash"
+                              size={18}
+                              color={COLORS.danger}
+                            />
+                          </Pressable>
+                        )}
                       </View>
 
                       {index !== draftTargets.length - 1 && (
@@ -1413,6 +2154,21 @@ function ProfileModal({
                   )}
                 </ScrollView>
               </View>
+
+              {canManageChildren && (
+                <View style={styles.addChildArea}>
+                  <Pressable
+                    style={styles.addChildBtn}
+                    onPress={() => {
+                      hideKeyboardAndTooltip();
+                      setChildModalOpen(true);
+                    }}
+                  >
+                    <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
+                    <Text style={styles.addChildBtnText}>자녀 추가하기</Text>
+                  </Pressable>
+                </View>
+              )}
 
               <View style={styles.modalBottomBtns}>
                 <Pressable
@@ -1438,6 +2194,152 @@ function ProfileModal({
         </View>
       </View>
     </Modal>
+
+    <Modal
+      visible={!!deleteTarget}
+      transparent
+      animationType="fade"
+      onRequestClose={closeDeleteChildModal}
+    >
+      <Pressable style={styles.childModalDim} onPress={closeDeleteChildModal}>
+        <Pressable
+          style={styles.deleteConfirmSheet}
+          onPress={(event) => event.stopPropagation()}
+        >
+          <Text style={styles.deleteConfirmTitle}>회원 탈퇴하시겠습니까?</Text>
+          {!!deleteTarget && (
+            <Text style={styles.deleteConfirmSub}>{deleteTarget.name}</Text>
+          )}
+          {!!deleteError && (
+            <Text style={styles.childErrorText}>{deleteError}</Text>
+          )}
+
+          <View style={styles.deleteConfirmBtns}>
+            <Pressable
+              style={[styles.deleteConfirmBtn, styles.btnGhost]}
+              onPress={closeDeleteChildModal}
+              disabled={deletingChild}
+            >
+              <Text style={[styles.bottomBtnText, styles.btnGhostText]}>아니오</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.deleteConfirmBtn,
+                styles.deleteDangerBtn,
+                deletingChild && { opacity: 0.55 },
+              ]}
+              onPress={submitDeleteChild}
+              disabled={deletingChild}
+            >
+              <Text style={styles.deleteDangerText}>
+                {deletingChild ? "삭제 중..." : "예"}
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+
+    <Modal
+      visible={childModalOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setChildModalOpen(false)}
+    >
+      <Pressable
+        style={styles.childModalDim}
+        onPress={() => {
+          Keyboard.dismiss();
+          setChildModalOpen(false);
+        }}
+      >
+        <Pressable
+          style={styles.childModalSheet}
+          onPress={(event) => event.stopPropagation()}
+        >
+          <View style={styles.childModalTop}>
+            <Text style={styles.childModalTitle}>자녀 추가하기</Text>
+            <Pressable
+              onPress={() => setChildModalOpen(false)}
+              style={styles.modalCloseBtn}
+              hitSlop={10}
+            >
+              <Ionicons name="close" size={12} color="#fff" />
+            </Pressable>
+          </View>
+
+          <View style={styles.childModalBody}>
+            <TextInput
+              value={childDraft.name}
+              onChangeText={(text) => changeChildDraft("name", text)}
+              placeholder="자녀 이름"
+              placeholderTextColor="rgba(17,24,39,0.35)"
+              style={styles.childInput}
+              returnKeyType="next"
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+            />
+            <TextInput
+              value={childDraft.age}
+              onChangeText={(text) =>
+                changeChildDraft("age", text.replace(/[^0-9]/g, ""))
+              }
+              placeholder="나이"
+              placeholderTextColor="rgba(17,24,39,0.35)"
+              keyboardType="number-pad"
+              style={styles.childInput}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+            />
+            <TextInput
+              value={childDraft.loginId}
+              onChangeText={(text) => changeChildDraft("loginId", text)}
+              placeholder="자녀 로그인 아이디"
+              placeholderTextColor="rgba(17,24,39,0.35)"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.childInput}
+              returnKeyType="next"
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+            />
+            <TextInput
+              value={childDraft.password}
+              onChangeText={(text) => changeChildDraft("password", text)}
+              placeholder="비밀번호"
+              placeholderTextColor="rgba(17,24,39,0.35)"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.childInput}
+              returnKeyType="done"
+              onSubmitEditing={submitChild}
+              autoComplete="new-password"
+              textContentType="newPassword"
+              importantForAutofill="no"
+            />
+
+            {!!childError && (
+              <Text style={styles.childErrorText}>{childError}</Text>
+            )}
+
+            <Pressable
+              style={[styles.childSaveBtn, addingChild && { opacity: 0.55 }]}
+              onPress={submitChild}
+              disabled={addingChild}
+            >
+              <Text style={styles.childSaveBtnText}>
+                {addingChild ? "저장 중..." : "저장"}
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+    </>
   );
 }
 
@@ -1855,6 +2757,132 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(239,68,68,0.12)",
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  addChildArea: {
+    marginHorizontal: 16,
+    marginTop: 12,
+  },
+  addChildBtn: {
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.22)",
+    backgroundColor: "rgba(59,130,246,0.08)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  addChildBtnText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: COLORS.primary,
+  },
+  childForm: {
+    marginTop: 10,
+    gap: 8,
+  },
+  childModalDim: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.42)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 22,
+  },
+  childModalSheet: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    ...SHADOW.floating,
+  },
+  childModalTop: {
+    height: 50,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  childModalTitle: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  childModalBody: {
+    padding: 16,
+    gap: 9,
+  },
+  deleteConfirmSheet: {
+    width: "100%",
+    maxWidth: 320,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    padding: 18,
+    gap: 12,
+    ...SHADOW.floating,
+  },
+  deleteConfirmTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#111827",
+    textAlign: "center",
+  },
+  deleteConfirmSub: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.55)",
+    textAlign: "center",
+  },
+  deleteConfirmBtns: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 2,
+  },
+  deleteConfirmBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteDangerBtn: {
+    backgroundColor: COLORS.danger,
+  },
+  deleteDangerText: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#fff",
+  },
+  childInput: {
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  childErrorText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.danger,
+  },
+  childSaveBtn: {
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  childSaveBtnText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#fff",
   },
 
   modalBottomBtns: { padding: 16, flexDirection: "row", gap: 12 },
