@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -19,21 +19,22 @@ import { COLORS, SHADOW } from "../../constants/theme";
 
 type Method = "phone" | "email";
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
-
 type Errors = Partial<Record<"userId" | "contact" | "name" | "code" | "pw" | "pw2", string>>;
 
-const AUTH_KEYS = {
+type SavedProfile = {
+  name?: string;
+  userId?: string;
+  email?: string;
+  phone?: string;
+};
+
+const STORAGE_KEYS = {
   accountId: "authAccountId",
   accountPw: "authAccountPw",
+  profile: "profileData_v1",
 } as const;
 
-const DEMO = {
-  userId: "admin",
-  phoneDigits: "01012345678",
-  email: "stt@naver.com",
-  name: "admin",
-  code: "123456",
-} as const;
+const AUTH_CODE = "123456";
 
 export default function FindPasswordScreen() {
   const router = useRouter();
@@ -44,7 +45,6 @@ export default function FindPasswordScreen() {
   const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
   const [phoneDigits, setPhoneDigits] = useState("");
-
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
 
@@ -70,6 +70,23 @@ export default function FindPasswordScreen() {
   const [yCode, setYCode] = useState(0);
   const [yPw, setYPw] = useState(0);
 
+  const loadSavedAccount = async () => {
+    const accountId = (await AsyncStorage.getItem(STORAGE_KEYS.accountId)) ?? "";
+    const profileRaw = await AsyncStorage.getItem(STORAGE_KEYS.profile);
+
+    let profile: SavedProfile | null = null;
+
+    if (profileRaw) {
+      try {
+        profile = JSON.parse(profileRaw);
+      } catch {
+        profile = null;
+      }
+    }
+
+    return { accountId, profile };
+  };
+
   const scrollToY = (y: number) => {
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ y: Math.max(0, y - 18), animated: true });
@@ -85,102 +102,70 @@ export default function FindPasswordScreen() {
     });
   };
 
-  const onlyDigits = (t: string, max: number) => t.replace(/[^0-9]/g, "").slice(0, max);
+  const onlyDigits = (t: string, max: number) =>
+    t.replace(/[^0-9]/g, "").slice(0, max);
 
-  const didEnterRef = useRef(false);
-  const shouldAutoFocusRef = useRef<null | "id" | "contactPhone" | "contactEmail" | "name" | "code" | "pw">(null);
+  const normalizeEmail = (v: string) => v.trim().toLowerCase();
+  const normalizePhone = (v?: string) => (v ?? "").replace(/[^0-9]/g, "");
+  const masked = (v: string) => "•".repeat(v.length);
 
-  useEffect(() => {
-    if (!didEnterRef.current) {
-      didEnterRef.current = true;
-      return;
-    }
-
-    if (step === 1 && shouldAutoFocusRef.current === "id") {
-      shouldAutoFocusRef.current = null;
-      setTimeout(() => {
-        idRef.current?.focus();
-        scrollToY(yId);
-      }, 60);
-      return;
-    }
-
-    if (step === 2) {
-      const next = shouldAutoFocusRef.current;
-      if (next === "contactPhone") {
-        shouldAutoFocusRef.current = null;
-        setTimeout(() => {
-          phoneInputRef.current?.focus();
-          scrollToY(yContact);
-        }, 60);
-        return;
-      }
-      if (next === "contactEmail") {
-        shouldAutoFocusRef.current = null;
-        setTimeout(() => {
-          emailRef.current?.focus();
-          scrollToY(yContact);
-        }, 60);
-        return;
-      }
-      return;
-    }
-
-    if (step === 3 && shouldAutoFocusRef.current === "name") {
-      shouldAutoFocusRef.current = null;
-      setTimeout(() => {
-        nameRef.current?.focus();
-        scrollToY(yName);
-      }, 60);
-      return;
-    }
-
-    if (step === 4 && shouldAutoFocusRef.current === "code") {
-      shouldAutoFocusRef.current = null;
-      setTimeout(() => {
-        codeRef.current?.focus();
-        scrollToY(yCode);
-      }, 60);
-      return;
-    }
-
-    if (step === 5 && shouldAutoFocusRef.current === "pw") {
-      shouldAutoFocusRef.current = null;
-      setTimeout(() => {
-        pwRef.current?.focus();
-        scrollToY(yPw);
-      }, 60);
-    }
-  }, [step, yId, yContact, yName, yCode, yPw]);
-
-  const validateStep1 = () => {
+  const validateStep1 = async () => {
     const next: Errors = {};
-    const v = userId.trim();
-    if (!v) next.userId = "아이디를 입력해주세요";
-    else if (v !== DEMO.userId) next.userId = "가입 정보와 일치하지 않습니다";
+    const { accountId } = await loadSavedAccount();
+    const inputId = userId.trim();
+
+    if (!accountId) next.userId = "가입된 회원 정보가 없습니다";
+    else if (!inputId) next.userId = "아이디를 입력해주세요";
+    else if (inputId !== accountId) next.userId = "가입 정보와 일치하지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
-  const validateStep2 = () => {
+  const validateStep2 = async () => {
     const next: Errors = {};
+    const { accountId, profile } = await loadSavedAccount();
+
+    if (!accountId || !profile) {
+      next.contact = "가입된 회원 정보가 없습니다";
+      setErrors(next);
+      return false;
+    }
+
     if (method === "phone") {
-      if (phoneDigits.length !== 11) next.contact = "전화번호는 11자리로 입력해주세요";
-      else if (phoneDigits !== DEMO.phoneDigits) next.contact = "가입 정보와 일치하지 않습니다";
+      const savedPhoneDigits = normalizePhone(profile.phone);
+
+      if (phoneDigits.length !== 11) {
+        next.contact = "전화번호는 11자리로 입력해주세요";
+      } else if (!savedPhoneDigits || phoneDigits !== savedPhoneDigits) {
+        next.contact = "가입 정보와 일치하지 않습니다";
+      }
     } else {
-      const v = email.trim();
-      if (!v) next.contact = "이메일을 입력해주세요";
-      else if (v !== DEMO.email) next.contact = "가입 정보와 일치하지 않습니다";
+      const inputEmail = normalizeEmail(email);
+      const savedEmail = normalizeEmail(profile.email ?? "");
+
+      if (!inputEmail) {
+        next.contact = "이메일을 입력해주세요";
+      } else if (!savedEmail || inputEmail !== savedEmail) {
+        next.contact = "가입 정보와 일치하지 않습니다";
+      }
     }
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
-  const validateStep3 = () => {
+  const validateStep3 = async () => {
     const next: Errors = {};
-    const v = name.trim();
-    if (!v) next.name = "이름 또는 단체명을 입력해주세요";
-    else if (v !== DEMO.name) next.name = "가입 정보와 일치하지 않습니다";
+    const { accountId, profile } = await loadSavedAccount();
+
+    const inputName = name.trim();
+    const savedName = profile?.name?.trim() ?? "";
+
+    if (!accountId || !profile) next.name = "가입된 회원 정보가 없습니다";
+    else if (!inputName) next.name = "이름 또는 단체명을 입력해주세요";
+    else if (inputName !== savedName) next.name = "가입 정보와 일치하지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -188,43 +173,85 @@ export default function FindPasswordScreen() {
   const validateStep4 = () => {
     const next: Errors = {};
     const v = code.trim();
+
     if (v.length !== 6) next.code = "인증코드 6자리를 입력해주세요";
-    else if (v !== DEMO.code) next.code = "인증코드가 올바르지 않습니다";
+    else if (v !== AUTH_CODE) next.code = "인증코드가 올바르지 않습니다";
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
   const validateStep5 = () => {
     const next: Errors = {};
-    const p1 = pw;
-    const p2 = pw2;
 
-    if (!p1) next.pw = "새 비밀번호를 입력해주세요";
-    else if (p1.length < 5) next.pw = "비밀번호는 5자 이상으로 입력해주세요";
+    if (!pw) next.pw = "새 비밀번호를 입력해주세요";
+    else if (pw.length < 5) next.pw = "비밀번호는 5자 이상으로 입력해주세요";
 
-    if (!p2) next.pw2 = "비밀번호 확인을 입력해주세요";
-    else if (p2 !== p1) next.pw2 = "비밀번호가 일치하지 않습니다";
+    if (!pw2) next.pw2 = "비밀번호 확인을 입력해주세요";
+    else if (pw2 !== pw) next.pw2 = "비밀번호가 일치하지 않습니다";
 
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
+  const saveNewPassword = async () => {
+    await AsyncStorage.setItem(STORAGE_KEYS.accountPw, pw.trim());
+  };
+
+  const resetContactInputs = (nextMethod: Method) => {
+    setMethod(nextMethod);
+    setPhoneDigits("");
+    setEmail("");
+    clearError("contact");
+  };
+
+  const onNext = async () => {
+    if (step === 1) {
+      if (!(await validateStep1())) return;
+      setStep(2);
+      return;
+    }
+
+    if (step === 2) {
+      if (!(await validateStep2())) return;
+      setStep(3);
+      return;
+    }
+
+    if (step === 3) {
+      if (!(await validateStep3())) return;
+      setStep(4);
+      return;
+    }
+
+    if (step === 4) {
+      if (!validateStep4()) return;
+      setStep(5);
+      return;
+    }
+
+    if (step === 5) {
+      if (!validateStep5()) return;
+      await saveNewPassword();
+      setStep(6);
+    }
+  };
+
   const headerTitle = step === 6 ? "비밀번호 재설정 완료" : "비밀번호 찾기";
 
   const HERO_TEXT = useMemo(() => {
-    if (step === 1) return { title: "기존 아이디", sub: "아이디를 입력하세요" };
-    if (step === 2) return { title: "전화번호 또는 이메일", sub: "전화번호 또는 이메일을 입력하세요" };
-    if (step === 3) return { title: "이름 또는 단체명", sub: "이름 또는 단체명을 입력하세요" };
-    if (step === 4) return { title: "인증코드", sub: "전송된 6자리 인증코드를 입력하세요" };
+    if (step === 1) return { title: "기존 아이디", sub: "회원가입 시 입력한 아이디를 입력하세요" };
+    if (step === 2) return { title: "전화번호 또는 이메일", sub: "회원가입 시 입력한 정보를 입력하세요" };
+    if (step === 3) return { title: "이름 또는 단체명", sub: "회원가입 시 입력한 이름을 입력하세요" };
+    if (step === 4) return { title: "인증코드", sub: "인증코드 6자리를 입력하세요" };
     if (step === 5) return { title: "비밀번호 재설정", sub: "새 비밀번호를 설정하세요" };
-    return { title: "변경 완료", sub: "" };
+    return { title: "완료", sub: "" };
   }, [step]);
-
-  const step5Error = errors.pw2 || errors.pw;
 
   const phoneA = phoneDigits.slice(0, 3);
   const phoneB = phoneDigits.slice(3, 7);
   const phoneC = phoneDigits.slice(7, 11);
+  const step5Error = errors.pw2 || errors.pw;
 
   const renderPhoneCell = (value: string, placeholder: string, width: number) => {
     const shown = value || placeholder;
@@ -239,21 +266,21 @@ export default function FindPasswordScreen() {
     );
   };
 
-  const saveNewPassword = async () => {
-    const nextId = DEMO.userId;
-    const nextPw = pw.trim();
-
-    await AsyncStorage.setItem(AUTH_KEYS.accountId, nextId);
-    await AsyncStorage.setItem(AUTH_KEYS.accountPw, nextPw);
-  };
-
   return (
-    <LinearGradient colors={[COLORS.bgTop ?? COLORS.bg, COLORS.bgBottom ?? COLORS.bg]} style={{ flex: 1 }}>
-      <SafeAreaView edges={["top"]} style={{ backgroundColor: "transparent" }}>
+    <LinearGradient
+      colors={[COLORS.bgTop ?? COLORS.bg, COLORS.bgBottom ?? COLORS.bg]}
+      style={{ flex: 1 }}
+    >
+      <SafeAreaView edges={[]} style={{ backgroundColor: "transparent" }}>
         <View style={styles.topBar}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+          <Pressable
+            style={styles.backBtn}
+            onPress={() => router.replace("/(auth)/login")}
+            hitSlop={12}
+          >
             <Ionicons name="arrow-back" size={22} color="#111827" />
           </Pressable>
+
           <Text style={styles.topTitle}>{headerTitle}</Text>
           <View style={{ width: 44 }} />
         </View>
@@ -274,7 +301,7 @@ export default function FindPasswordScreen() {
           {step !== 6 ? (
             <View style={styles.hero}>
               <View style={styles.logoCircle}>
-                <Ionicons name="key" size={24} color={COLORS.primary} />
+                <Ionicons name="key" size={23} color={COLORS.primary} />
               </View>
               <Text style={styles.heroTitle}>{HERO_TEXT.title}</Text>
               <Text style={styles.heroSub}>{HERO_TEXT.sub}</Text>
@@ -290,34 +317,38 @@ export default function FindPasswordScreen() {
           <View style={styles.card}>
             {step === 1 && (
               <View onLayout={(e) => setYId(e.nativeEvent.layout.y)}>
-                <View style={styles.singleInputBox}>
+                <Pressable
+                  style={styles.singleInputBox}
+                  onPress={() => {
+                    idRef.current?.focus();
+                    scrollToY(yId);
+                  }}
+                >
+                  {userId.length === 0 && (
+                    <Text style={styles.centerPlaceholder}>아이디를 입력해주세요</Text>
+                  )}
+
                   <TextInput
                     ref={idRef}
-                    style={styles.singleInput}
+                    style={styles.centerInput}
                     value={userId}
                     onChangeText={(t) => {
                       setUserId(t);
                       clearError("userId");
                     }}
                     onFocus={() => scrollToY(yId)}
-                    placeholder="아이디 입력"
-                    placeholderTextColor="#9CA3AF"
+                    placeholder=""
                     autoCapitalize="none"
                     autoCorrect={false}
                     returnKeyType="done"
+                    textAlign="center"
+                    textAlignVertical="center"
                   />
-                </View>
+                </Pressable>
 
                 {!!errors.userId && <Text style={styles.errorText}>{errors.userId}</Text>}
 
-                <Pressable
-                  style={styles.primaryBtn}
-                  onPress={() => {
-                    if (!validateStep1()) return;
-                    shouldAutoFocusRef.current = method === "phone" ? "contactPhone" : "contactEmail";
-                    setStep(2);
-                  }}
-                >
+                <Pressable style={styles.primaryBtn} onPress={onNext}>
                   <Text style={styles.primaryBtnText}>다음</Text>
                 </Pressable>
               </View>
@@ -327,35 +358,29 @@ export default function FindPasswordScreen() {
               <View onLayout={(e) => setYContact(e.nativeEvent.layout.y)}>
                 <View style={styles.contactWrap}>
                   <View style={styles.methodRow}>
-                    <Pressable
-                      style={styles.methodBtn}
-                      hitSlop={8}
-                      onPress={() => {
-                        setMethod("phone");
-                        clearError("contact");
-                        setTimeout(() => phoneInputRef.current?.focus(), 80);
-                      }}
-                    >
-                      <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
-                        전화번호
-                      </Text>
-                    </Pressable>
+                    <View style={styles.methodInner}>
+                      <Pressable
+                        style={styles.methodBtn}
+                        hitSlop={8}
+                        onPress={() => resetContactInputs("phone")}
+                      >
+                        <Text style={[styles.methodText, method !== "phone" && styles.methodTextOff]}>
+                          전화번호
+                        </Text>
+                      </Pressable>
 
-                    <Text style={styles.methodDivider}>|</Text>
+                      <Text style={styles.methodDivider}>|</Text>
 
-                    <Pressable
-                      style={styles.methodBtn}
-                      hitSlop={8}
-                      onPress={() => {
-                        setMethod("email");
-                        clearError("contact");
-                        setTimeout(() => emailRef.current?.focus(), 80);
-                      }}
-                    >
-                      <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>
-                        이메일
-                      </Text>
-                    </Pressable>
+                      <Pressable
+                        style={styles.methodBtn}
+                        hitSlop={8}
+                        onPress={() => resetContactInputs("email")}
+                      >
+                        <Text style={[styles.methodText, method !== "email" && styles.methodTextOff]}>
+                          이메일
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
 
                   {method === "phone" ? (
@@ -367,11 +392,11 @@ export default function FindPasswordScreen() {
                       }}
                     >
                       <View style={styles.phoneDisplayRow}>
-                        {renderPhoneCell(phoneA, "000", 72)}
+                        {renderPhoneCell(phoneA, "000", 54)}
                         <Text style={styles.phoneHyphen}>-</Text>
-                        {renderPhoneCell(phoneB, "0000", 88)}
+                        {renderPhoneCell(phoneB, "0000", 64)}
                         <Text style={styles.phoneHyphen}>-</Text>
-                        {renderPhoneCell(phoneC, "0000", 88)}
+                        {renderPhoneCell(phoneC, "0000", 64)}
                       </View>
 
                       <TextInput
@@ -384,9 +409,11 @@ export default function FindPasswordScreen() {
                         }}
                         onFocus={() => scrollToY(yContact)}
                         keyboardType="number-pad"
+                        inputMode="numeric"
                         maxLength={11}
                         returnKeyType="done"
                         caretHidden
+                        contextMenuHidden
                       />
                     </Pressable>
                   ) : (
@@ -397,9 +424,13 @@ export default function FindPasswordScreen() {
                         scrollToY(yContact);
                       }}
                     >
+                      {email.length === 0 && (
+                        <Text style={styles.centerPlaceholder}>이메일을 입력해주세요</Text>
+                      )}
+
                       <TextInput
                         ref={emailRef}
-                        style={styles.emailInput}
+                        style={styles.centerInput}
                         value={email}
                         onChangeText={(t) => {
                           setEmail(t);
@@ -409,9 +440,10 @@ export default function FindPasswordScreen() {
                         autoCapitalize="none"
                         autoCorrect={false}
                         keyboardType="email-address"
-                        placeholder="이메일을 입력해주세요"
-                        placeholderTextColor="#9CA3AF"
+                        placeholder=""
                         returnKeyType="done"
+                        textAlign="center"
+                        textAlignVertical="center"
                       />
                     </Pressable>
                   )}
@@ -419,14 +451,7 @@ export default function FindPasswordScreen() {
 
                 {!!errors.contact && <Text style={styles.errorText}>{errors.contact}</Text>}
 
-                <Pressable
-                  style={styles.primaryBtn}
-                  onPress={() => {
-                    if (!validateStep2()) return;
-                    shouldAutoFocusRef.current = "name";
-                    setStep(3);
-                  }}
-                >
+                <Pressable style={styles.primaryBtn} onPress={onNext}>
                   <Text style={styles.primaryBtnText}>다음</Text>
                 </Pressable>
               </View>
@@ -434,32 +459,37 @@ export default function FindPasswordScreen() {
 
             {step === 3 && (
               <View onLayout={(e) => setYName(e.nativeEvent.layout.y)}>
-                <View style={styles.singleInputBox}>
+                <Pressable
+                  style={styles.singleInputBox}
+                  onPress={() => {
+                    nameRef.current?.focus();
+                    scrollToY(yName);
+                  }}
+                >
+                  {name.length === 0 && (
+                    <Text style={styles.centerPlaceholder}>이름 또는 단체명을 입력해주세요</Text>
+                  )}
+
                   <TextInput
                     ref={nameRef}
-                    style={styles.singleInput}
+                    style={styles.centerInput}
                     value={name}
                     onChangeText={(t) => {
                       setName(t);
                       clearError("name");
                     }}
                     onFocus={() => scrollToY(yName)}
-                    placeholder="이름 또는 단체명 입력"
-                    placeholderTextColor="#9CA3AF"
+                    placeholder=""
                     returnKeyType="done"
+                    autoCorrect={false}
+                    textAlign="center"
+                    textAlignVertical="center"
                   />
-                </View>
+                </Pressable>
 
                 {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
 
-                <Pressable
-                  style={styles.primaryBtn}
-                  onPress={() => {
-                    if (!validateStep3()) return;
-                    shouldAutoFocusRef.current = "code";
-                    setStep(4);
-                  }}
-                >
+                <Pressable style={styles.primaryBtn} onPress={onNext}>
                   <Text style={styles.primaryBtnText}>확인</Text>
                 </Pressable>
               </View>
@@ -467,10 +497,24 @@ export default function FindPasswordScreen() {
 
             {step === 4 && (
               <View onLayout={(e) => setYCode(e.nativeEvent.layout.y)}>
-                <View style={styles.singleInputBox}>
+                <Pressable
+                  style={styles.singleInputBox}
+                  onPress={() => {
+                    codeRef.current?.focus();
+                    scrollToY(yCode);
+                  }}
+                >
+                  {code.length === 0 && (
+                    <Text style={[styles.centerPlaceholder, styles.codePlaceholder]}>
+                      ● ● ● ● ● ●
+                    </Text>
+                  )}
+
+                  {code.length > 0 && <Text style={styles.codeVisibleText}>{code}</Text>}
+
                   <TextInput
                     ref={codeRef}
-                    style={[styles.singleInput, { textAlign: "center", letterSpacing: 4 }]}
+                    style={styles.hiddenCodeInput}
                     value={code}
                     onChangeText={(t) => {
                       setCode(onlyDigits(t, 6));
@@ -478,23 +522,18 @@ export default function FindPasswordScreen() {
                     }}
                     onFocus={() => scrollToY(yCode)}
                     keyboardType="number-pad"
+                    inputMode="numeric"
                     maxLength={6}
-                    placeholder="● ● ● ● ● ●"
-                    placeholderTextColor="rgba(17,24,39,0.28)"
+                    placeholder=""
                     returnKeyType="done"
+                    contextMenuHidden
+                    caretHidden
                   />
-                </View>
+                </Pressable>
 
                 {!!errors.code && <Text style={styles.errorText}>{errors.code}</Text>}
 
-                <Pressable
-                  style={[styles.primaryBtn, { marginTop: 5 }]}
-                  onPress={() => {
-                    if (!validateStep4()) return;
-                    shouldAutoFocusRef.current = "pw";
-                    setStep(5);
-                  }}
-                >
+                <Pressable style={styles.primaryBtn} onPress={onNext}>
                   <Text style={styles.primaryBtnText}>인증 완료</Text>
                 </Pressable>
               </View>
@@ -503,64 +542,83 @@ export default function FindPasswordScreen() {
             {step === 5 && (
               <View onLayout={(e) => setYPw(e.nativeEvent.layout.y)}>
                 <View style={styles.pwGroup}>
-                  <View style={styles.pwRow}>
+                  <Pressable
+                    style={styles.pwRow}
+                    onPress={() => {
+                      pwRef.current?.focus();
+                      scrollToY(yPw);
+                    }}
+                  >
+                    {pw.length === 0 ? (
+                      <Text style={styles.pwPlaceholder}>새 비밀번호</Text>
+                    ) : (
+                      <Text style={styles.pwVisibleText}>{pwShow ? pw : masked(pw)}</Text>
+                    )}
+
                     <TextInput
                       ref={pwRef}
-                      style={[styles.pwInput, { letterSpacing: 0.5 }]}
-                      placeholder="새 비밀번호"
-                      placeholderTextColor="#9CA3AF"
+                      style={styles.hiddenPwInput}
                       value={pw}
                       onChangeText={(t) => {
                         setPw(t);
                         clearError("pw");
                       }}
                       onFocus={() => scrollToY(yPw)}
-                      secureTextEntry={!pwShow}
+                      secureTextEntry
                       autoCapitalize="none"
                       autoCorrect={false}
                       returnKeyType="next"
+                      contextMenuHidden
+                      caretHidden
                       onSubmitEditing={() => pw2Ref.current?.focus()}
                     />
+
                     <Pressable style={styles.eyeBtn} onPress={() => setPwShow((v) => !v)} hitSlop={8}>
-                      <Ionicons name={pwShow ? "eye-off" : "eye"} size={20} color="rgba(17,24,39,0.45)" />
+                      <Ionicons name={pwShow ? "eye" : "eye-off"} size={20} color="rgba(17,24,39,0.45)" />
                     </Pressable>
-                  </View>
+                  </Pressable>
 
                   <View style={styles.pwDivider} />
 
-                  <View style={styles.pwRow}>
+                  <Pressable
+                    style={styles.pwRow}
+                    onPress={() => {
+                      pw2Ref.current?.focus();
+                      scrollToY(yPw);
+                    }}
+                  >
+                    {pw2.length === 0 ? (
+                      <Text style={styles.pwPlaceholder}>새 비밀번호 확인</Text>
+                    ) : (
+                      <Text style={styles.pwVisibleText}>{pw2Show ? pw2 : masked(pw2)}</Text>
+                    )}
+
                     <TextInput
                       ref={pw2Ref}
-                      style={styles.pwInput}
-                      placeholder="새 비밀번호 확인"
-                      placeholderTextColor="#9CA3AF"
+                      style={styles.hiddenPwInput}
                       value={pw2}
                       onChangeText={(t) => {
                         setPw2(t);
                         clearError("pw2");
                       }}
                       onFocus={() => scrollToY(yPw)}
-                      secureTextEntry={!pw2Show}
+                      secureTextEntry
                       autoCapitalize="none"
                       autoCorrect={false}
                       returnKeyType="done"
+                      contextMenuHidden
+                      caretHidden
                     />
+
                     <Pressable style={styles.eyeBtn} onPress={() => setPw2Show((v) => !v)} hitSlop={8}>
-                      <Ionicons name={pw2Show ? "eye-off" : "eye"} size={20} color="rgba(17,24,39,0.45)" />
+                      <Ionicons name={pw2Show ? "eye" : "eye-off"} size={20} color="rgba(17,24,39,0.45)" />
                     </Pressable>
-                  </View>
+                  </Pressable>
                 </View>
 
                 {!!step5Error && <Text style={styles.errorTextPw}>{step5Error}</Text>}
 
-                <Pressable
-                  style={styles.primaryBtn}
-                  onPress={async () => {
-                    if (!validateStep5()) return;
-                    await saveNewPassword();
-                    setStep(6);
-                  }}
-                >
+                <Pressable style={styles.primaryBtn} onPress={onNext}>
                   <Text style={styles.primaryBtnText}>변경 완료</Text>
                 </Pressable>
               </View>
@@ -569,7 +627,7 @@ export default function FindPasswordScreen() {
             {step === 6 && (
               <View>
                 <Pressable
-                  style={[styles.primaryBtn, { marginTop: 5 }]}
+                  style={[styles.primaryBtn, { marginTop: 0 }]}
                   onPress={() => router.replace("/(auth)/login")}
                 >
                   <Text style={styles.primaryBtnText}>로그인으로 이동</Text>
@@ -592,23 +650,52 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 10,
   },
-  backBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  topTitle: { flex: 1, textAlign: "center", fontSize: 16, fontWeight: "900", color: "#111827" },
 
-  body: { paddingHorizontal: 22, paddingBottom: 40 },
+  backBtn: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-  hero: { alignItems: "center", marginTop: 18, marginBottom: 14 },
+  topTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#111827",
+    paddingTop: 2,
+  },
+
+  body: {
+    paddingHorizontal: 22,
+    paddingBottom: 40,
+  },
+
+  hero: {
+    alignItems: "center",
+    marginTop: 18,
+    marginBottom: 14,
+  },
+
   logoCircle: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
-    ...SHADOW.soft,
     marginBottom: 10,
+    ...SHADOW.soft,
   },
-  heroTitle: { fontSize: 18, fontWeight: "900", color: "#111827", marginTop: 6 },
+
+  heroTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#111827",
+    marginTop: 9,
+  },
+
   heroSub: {
     marginTop: 4,
     fontSize: 13,
@@ -617,18 +704,33 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  heroDone: { alignItems: "center", marginTop: 22, marginBottom: 14 },
-  doneTitle: { marginTop: 10, fontSize: 22, fontWeight: "900", color: "#111827" },
-  doneSub: { marginTop: 8, fontSize: 13, fontWeight: "800", color: "rgba(17,24,39,0.55)" },
+  heroDone: {
+    alignItems: "center",
+    marginTop: 22,
+    marginBottom: 14,
+  },
+
+  doneTitle: {
+    marginTop: 10,
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  doneSub: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.55)",
+  },
 
   card: {
     alignSelf: "center",
-    width: "100%",
-    maxWidth: 360,
-    borderRadius: 18,
-    padding: 16,
-    marginTop: -10,
-    ...SHADOW.card,
+    width: "86%",
+    maxWidth: 300,
+    padding: 0,
+    marginTop: 6,
+    backgroundColor: "transparent",
   },
 
   singleInputBox: {
@@ -637,78 +739,104 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.10)",
-    paddingHorizontal: 14,
     justifyContent: "center",
-    marginBottom: 12,
-  },
-  singleInput: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
+    alignItems: "center",
+    marginBottom: 24,
+    position: "relative",
   },
 
   contactWrap: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 300,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.10)",
-    backgroundColor: "rgba(255,255,255,0.65)",
+    backgroundColor: "rgba(255,255,255,0.82)",
     overflow: "hidden",
-    marginBottom: 12,
+    marginBottom: 24,
   },
+
   methodRow: {
     height: 44,
-    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.88)",
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0,0,0,0.06)",
   },
-  methodBtn: { width: 110, alignItems: "center", justifyContent: "center" },
-  methodDivider: {
-    width: 18,
-    textAlign: "center",
-    fontSize: 16,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.25)",
-    marginHorizontal: 6,
-  },
-  methodText: { fontSize: 15, fontWeight: "800", color: "#111827", textAlign: "center" },
-  methodTextOff: { color: "rgba(17,24,39,0.35)" },
 
-  phoneBox: {
-    height: 54,
-    paddingHorizontal: 14,
-    justifyContent: "center",
-    backgroundColor: "#fff",
-    position: "relative",
-  },
-  phoneDisplayRow: {
+  methodInner: {
+    width: 218,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
   },
+
+  methodBtn: {
+    width: 92,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  methodDivider: {
+    width: 34,
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.25)",
+  },
+
+  methodText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+  },
+
+  methodTextOff: {
+    color: "rgba(17,24,39,0.35)",
+  },
+
+  phoneBox: {
+    height: 54,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    position: "relative",
+  },
+
+  phoneDisplayRow: {
+    width: 222,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   phoneCell: {
     alignItems: "center",
     justifyContent: "center",
   },
+
   phoneCellText: {
     fontSize: 15,
     fontWeight: "800",
     color: "#111827",
     textAlign: "center",
   },
+
   phonePlaceholder: {
     color: "#9CA3AF",
   },
+
   phoneHyphen: {
-    marginHorizontal: 2,
+    width: 20,
+    textAlign: "center",
     fontSize: 14,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
   },
+
   hiddenPhoneInput: {
     position: "absolute",
     opacity: 0,
@@ -720,17 +848,57 @@ const styles = StyleSheet.create({
 
   emailBox: {
     height: 54,
-    paddingHorizontal: 14,
     justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#fff",
+    position: "relative",
   },
-  emailInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "800",
+
+  centerPlaceholder: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#9CA3AF",
+    zIndex: 1,
+  },
+
+  centerInput: {
+    width: "100%",
+    height: "100%",
+    fontSize: 15,
+    fontWeight: "900",
     color: "#111827",
     textAlign: "center",
+    textAlignVertical: "center",
+    paddingHorizontal: 0,
     paddingVertical: 0,
+    zIndex: 2,
+  },
+
+  hiddenCodeInput: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
+
+  codePlaceholder: {
+    fontSize: 15,
+    letterSpacing: 4,
+  },
+
+  codeVisibleText: {
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#111827",
+    letterSpacing: 4,
+    zIndex: 2,
   },
 
   pwGroup: {
@@ -739,41 +907,70 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.10)",
     overflow: "hidden",
-    ...SHADOW.soft,
+    marginBottom: 24,
   },
+
   pwRow: {
     height: 54,
     justifyContent: "center",
     position: "relative",
-    paddingHorizontal: 14,
     backgroundColor: "#fff",
-    paddingLeft: 44,
   },
-  pwInput: {
-    fontSize: 16,
+
+  pwPlaceholder: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#9CA3AF",
+    zIndex: 1,
+  },
+
+  pwVisibleText: {
+    textAlign: "center",
+    fontSize: 15,
     fontWeight: "900",
     color: "#111827",
-    textAlign: "center",
-    paddingVertical: 0,
-    paddingRight: 34,
+    paddingHorizontal: 46,
+    zIndex: 2,
   },
+
+  hiddenPwInput: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
+
   pwDivider: {
     height: 1,
     backgroundColor: "rgba(0,0,0,0.06)",
   },
-  eyeBtn: { position: "absolute", right: 12, height: 54, justifyContent: "center" },
+
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    height: 54,
+    justifyContent: "center",
+    zIndex: 5,
+  },
 
   errorText: {
-    marginTop: -4,
-    marginBottom: 10,
+    marginTop: -14,
+    marginBottom: 12,
     fontSize: 12,
     fontWeight: "900",
     color: "#EF4444",
     textAlign: "center",
   },
+
   errorTextPw: {
-    marginTop: 8,
-    marginBottom: 2,
+    marginTop: -14,
+    marginBottom: 12,
     fontSize: 12,
     fontWeight: "900",
     color: "#EF4444",
@@ -781,41 +978,26 @@ const styles = StyleSheet.create({
   },
 
   primaryBtn: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 300,
     height: 54,
     borderRadius: 16,
     backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
-    ...SHADOW.floating,
-    marginTop: 17,
-  },
-  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "900" },
+    marginTop: 0,
 
-  resultCard: {
-    borderRadius: 18,
-    padding: 18,
-    backgroundColor: "rgba(255,255,255,0.90)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    ...SHADOW.card,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 7,
   },
-  resultIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.success ?? "#22C55E",
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 10,
-  },
-  resultTitle: { textAlign: "center", fontSize: 16, fontWeight: "900", color: "#111827" },
-  resultHint: {
-    textAlign: "center",
-    marginTop: 10,
-    fontSize: 13,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.55)",
-    marginBottom: 10,
+
+  primaryBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
   },
 });

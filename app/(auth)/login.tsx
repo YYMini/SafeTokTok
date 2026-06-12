@@ -32,6 +32,8 @@ export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
 
+  const pwInputRef = useRef<TextInput>(null);
+
   const [id, setId] = useState("");
   const [pw, setPw] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -90,8 +92,10 @@ export default function LoginScreen() {
         setRememberMe(isRemember);
 
         if (isRemember) {
-          const savedId = (await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "";
-          const savedPw = (await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "";
+          const savedId =
+            (await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "";
+          const savedPw =
+            (await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "";
           setId(savedId);
           setPw(savedPw);
         }
@@ -163,7 +167,6 @@ export default function LoginScreen() {
     }
 
     await login();
-    router.replace("/(tabs)");
   };
 
   const goSignup = () => router.push("/(auth)/signup");
@@ -174,11 +177,23 @@ export default function LoginScreen() {
     const isError = toastType === "error";
     const isSuccess = toastType === "success";
 
-    const iconName = isError ? "alert-circle" : isSuccess ? "checkmark-circle" : "information-circle";
-    const iconColor = isError ? COLORS.danger : isSuccess ? COLORS.success : COLORS.text;
+    const iconName = isError
+      ? "alert-circle"
+      : isSuccess
+      ? "checkmark-circle"
+      : "information-circle";
+    const iconColor = isError
+      ? COLORS.danger
+      : isSuccess
+      ? COLORS.success
+      : COLORS.text;
 
-    const bg = isError ? "rgba(255, 235, 235, 0.92)" : "rgba(235, 255, 243, 0.92)";
-    const border = isError ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)";
+    const bg = isError
+      ? "rgba(255, 235, 235, 0.92)"
+      : "rgba(235, 255, 243, 0.92)";
+    const border = isError
+      ? "rgba(239,68,68,0.35)"
+      : "rgba(34,197,94,0.35)";
     const textColor = isError ? "#B91C1C" : "#047857";
 
     return { iconName, iconColor, bg, border, textColor };
@@ -207,10 +222,22 @@ export default function LoginScreen() {
             },
           ]}
         >
-          <View style={[styles.toastBox, { backgroundColor: toastUI.bg, borderColor: toastUI.border }]}>
+          <View
+            style={[
+              styles.toastBox,
+              { backgroundColor: toastUI.bg, borderColor: toastUI.border },
+            ]}
+          >
             <View style={styles.toastContent}>
-              <Ionicons name={toastUI.iconName as any} size={20} color={toastUI.iconColor} />
-              <Text style={[styles.toastText, { color: toastUI.textColor }]} numberOfLines={1}>
+              <Ionicons
+                name={toastUI.iconName as any}
+                size={20}
+                color={toastUI.iconColor}
+              />
+              <Text
+                style={[styles.toastText, { color: toastUI.textColor }]}
+                numberOfLines={1}
+              >
                 {toastText}
               </Text>
             </View>
@@ -221,7 +248,11 @@ export default function LoginScreen() {
       <View style={styles.container}>
         <View style={styles.logoWrap}>
           <View style={styles.logoCircle}>
-            <Ionicons name="shield-checkmark" size={23} color={COLORS.primary} />
+            <Ionicons
+              name="shield-checkmark"
+              size={23}
+              color={COLORS.primary}
+            />
           </View>
           <Text style={styles.brand}>안심톡톡</Text>
           <Text style={styles.slogan}>우리 아이의 안전한 동행</Text>
@@ -241,35 +272,70 @@ export default function LoginScreen() {
             autoCorrect={false}
             style={styles.input}
             returnKeyType="next"
+            onSubmitEditing={() => pwInputRef.current?.focus()}
           />
 
-          <View style={styles.pwRow}>
+          <Pressable
+            style={styles.pwRow}
+            onPress={() => pwInputRef.current?.focus()}
+          >
+            <View style={[styles.input, styles.pwInputDisplay]}>
+              <Text
+                style={[
+                  styles.pwDisplayText,
+                  !pw && styles.pwPlaceholderText,
+                ]}
+                numberOfLines={1}
+              >
+                {pw ? (showPw ? pw : "●".repeat(pw.length)) : "비밀번호"}
+              </Text>
+            </View>
+
             <TextInput
-              placeholder="비밀번호"
-              placeholderTextColor="#9CA3AF"
+              ref={pwInputRef}
               value={pw}
               onChangeText={(t) => {
                 if (toastVisible) dismissToast();
                 setPw(t);
               }}
               onFocus={onFocusInput}
-              secureTextEntry={!showPw}
+              secureTextEntry={false}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, styles.pwInput]}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+              keyboardType="default"
+              contextMenuHidden
+              caretHidden
+              style={styles.hiddenPwInput}
               returnKeyType="done"
               onSubmitEditing={onSubmit}
             />
 
-            <Pressable style={styles.eyeBtn} onPress={() => setShowPw((v) => !v)} hitSlop={8}>
-              <Ionicons name={showPw ? "eye" : "eye-off"} size={22} color="#6B7280" />
+            <Pressable
+              style={styles.eyeBtn}
+              onPress={() => setShowPw((v) => !v)}
+              hitSlop={8}
+            >
+              <Ionicons
+                name={showPw ? "eye" : "eye-off"}
+                size={22}
+                color="#6B7280"
+              />
             </Pressable>
-          </View>
+          </Pressable>
 
           <View style={styles.optionsRow}>
-            <Pressable style={styles.rememberRow} onPress={() => setRememberMe((v) => !v)} hitSlop={8}>
+            <Pressable
+              style={styles.rememberRow}
+              onPress={() => setRememberMe((v) => !v)}
+              hitSlop={8}
+            >
               <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
-                {rememberMe && <Ionicons name="checkmark" size={16} color="#fff" />}
+                {rememberMe && (
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                )}
               </View>
               <Text style={styles.rememberText}>자동 로그인</Text>
             </Pressable>
@@ -396,7 +462,31 @@ const styles = StyleSheet.create({
     marginBottom: -1,
   },
 
-  pwInput: { paddingRight: 48 },
+  pwInputDisplay: {
+    paddingRight: 48,
+    justifyContent: "center",
+  },
+
+  pwDisplayText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: COLORS.text,
+  },
+
+  pwPlaceholderText: {
+    color: "#9CA3AF",
+  },
+
+  hiddenPwInput: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    opacity: 0,
+    color: "transparent",
+    backgroundColor: "transparent",
+  },
 
   eyeBtn: {
     position: "absolute",
