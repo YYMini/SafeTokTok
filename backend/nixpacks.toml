@@ -2,7 +2,7 @@
 nixPkgs = ["jdk17", "gradle"]
 
 [phases.build]
-cmds = ["cd backend && ./gradlew clean build -x test"]
+cmds = ["./gradlew clean build -x test"]
 
 [start]
-cmd = "java -jar backend/build/libs/*.jar"
+cmd = "java -jar build/libs/*.jar"
