@@ -5,4 +5,4 @@ nixPkgs = ["jdk17", "gradle"]
 cmds = ["./gradlew clean build -x test"]
 
 [start]
-cmd = "java -jar build/libs/*.jar"
+cmd = "java -jar build/libs/*.jar --server.address=0.0.0.0 --server.port=${PORT:-8080}"
