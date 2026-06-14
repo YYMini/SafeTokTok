@@ -23,6 +23,9 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
+
+const KAKAO_MAP_APP_KEY = "d74e3a0d741775a29ef17516bf90fe89";
 
 declare global {
   interface Window {
@@ -690,6 +693,7 @@ function MapPlaceholder({
           onOpenTargetModal={() => setTargetModalOpen(true)}
           onPressSOS={handlePressSOS}
           onCloseNotice={() => setDangerNoticeVisible(false)}
+          useKakaoMap
         />
       )}
 
@@ -773,7 +777,92 @@ type MockMapProps = MapOverlayProps & {
   zoom: number;
   pan: { x: number; y: number };
   onPan: (pan: { x: number; y: number }) => void;
+  useKakaoMap?: boolean;
 };
+
+function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
+  const centerLat = 37.5665;
+  const centerLng = 126.978;
+  const targetName = JSON.stringify(dangerTarget.name);
+  const mapType =
+    mapMode === "satellite"
+      ? "kakao.maps.MapTypeId.SKYVIEW"
+      : "kakao.maps.MapTypeId.ROADMAP";
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <style>
+    html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: #dceeff; }
+    .label {
+      background: #12b85c;
+      color: white;
+      border-radius: 9px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      transform: translateY(-42px);
+    }
+    .label.danger { background: #f04a16; }
+  </style>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_MAP_APP_KEY}&autoload=false"></script>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    kakao.maps.load(function () {
+      var center = new kakao.maps.LatLng(${centerLat}, ${centerLng});
+      var target = new kakao.maps.LatLng(${dangerTarget.latitude}, ${dangerTarget.longitude});
+      var map = new kakao.maps.Map(document.getElementById('map'), {
+        center: center,
+        level: 3,
+        mapTypeId: ${mapType}
+      });
+
+      new kakao.maps.Marker({ map: map, position: center });
+      new kakao.maps.CustomOverlay({
+        map: map,
+        position: center,
+        yAnchor: 2.2,
+        content: '<div class="label">보호자</div>'
+      });
+
+      new kakao.maps.Marker({ map: map, position: target });
+      new kakao.maps.CustomOverlay({
+        map: map,
+        position: target,
+        yAnchor: 2.2,
+        content: '<div class="label danger">' + ${targetName} + '</div>'
+      });
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function NativeKakaoMap({
+  dangerTarget,
+  mapMode,
+}: {
+  dangerTarget: DangerTarget;
+  mapMode: MapMode;
+}) {
+  return (
+    <WebView
+      key={`${mapMode}-${dangerTarget.id}`}
+      source={{ html: getNativeKakaoMapHtml(dangerTarget, mapMode) }}
+      originWhitelist={["*"]}
+      javaScriptEnabled
+      domStorageEnabled
+      mixedContentMode="always"
+      style={styles.nativeKakaoMap}
+    />
+  );
+}
 
 function MockMap(props: MockMapProps) {
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
@@ -855,6 +944,13 @@ function MockMap(props: MockMapProps) {
         setMapSize({ width, height });
       }}
     >
+      {props.useKakaoMap && (
+        <NativeKakaoMap
+          dangerTarget={props.dangerTarget}
+          mapMode={props.mapMode}
+        />
+      )}
+
       {/* 지도 그룹: 배경 지도 + 지오펜스 + 대상자/보호자 + 경로선이 실제 지도처럼 함께 이동 */}
       <View
         style={[
@@ -1997,6 +2093,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#DCEEFF",
     position: "relative",
     overflow: "hidden",
+  },
+
+  nativeKakaoMap: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#DCEEFF",
   },
 
   mockMapCanvas: {
