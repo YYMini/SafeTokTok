@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["jdk17"]
+
+[phases.build]
+cmds = ["./gradlew clean build -x check -x test -Pproduction"]
+
+[start]
+cmd = "java -jar build/libs/*.jar"
