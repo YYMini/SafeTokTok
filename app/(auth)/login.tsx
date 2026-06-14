@@ -45,6 +45,8 @@ export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
 
+  const pwInputRef = useRef<TextInput>(null);
+
   const [id, setId] = useState("");
   const [pw, setPw] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -54,6 +56,7 @@ export default function LoginScreen() {
   const [toastText, setToastText] = useState("");
   const [toastType, setToastType] = useState<ToastType>("none");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const toastAnim = useRef(new Animated.Value(0)).current;
 
   const dismissToast = () => {
@@ -61,6 +64,7 @@ export default function LoginScreen() {
       clearTimeout(toastTimerRef.current);
       toastTimerRef.current = null;
     }
+
     Animated.timing(toastAnim, {
       toValue: 0,
       duration: 160,
@@ -101,8 +105,12 @@ export default function LoginScreen() {
         setRememberMe(isRemember);
 
         if (isRemember) {
-          setId((await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "");
-          setPw((await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "");
+          const savedId =
+            (await AsyncStorage.getItem(STORAGE_KEYS.savedId)) ?? "";
+          const savedPw =
+            (await AsyncStorage.getItem(STORAGE_KEYS.savedPw)) ?? "";
+          setId(savedId);
+          setPw(savedPw);
         }
       } catch {
         // ignore
@@ -114,15 +122,18 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const normalized = useMemo(
-    () => ({
+  const onFocusInput = () => {
+    if (toastVisible) dismissToast();
+  };
+
+  const normalized = useMemo(() => {
+    return {
       id: id.trim(),
       pw: pw.trim(),
-    }),
-    [id, pw],
-  );
+    };
+  }, [id, pw]);
 
-  const saveLoginState = async (loggedInUser: LoginResponse | null) => {
+  const saveLoginState = async (loggedInUser: LoginResponse) => {
     if (rememberMe) {
       await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
       await AsyncStorage.setItem(STORAGE_KEYS.savedId, normalized.id);
@@ -134,9 +145,6 @@ export default function LoginScreen() {
     }
 
     await AsyncStorage.setItem(STORAGE_KEYS.isLoggedIn, "true");
-
-    if (!loggedInUser) return;
-
     await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(loggedInUser.id));
     await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, loggedInUser.role);
     await AsyncStorage.setItem(STORAGE_KEYS.accountId, loggedInUser.loginId);
@@ -150,6 +158,7 @@ export default function LoginScreen() {
         phone: loggedInUser.phone ?? "010-0000-0000",
         imageUri: null,
         role: loggedInUser.role,
+        roleLabel: loggedInUser.role === "PARENT" ? "보호자" : "사용자",
       }),
     );
   };
@@ -158,11 +167,9 @@ export default function LoginScreen() {
     Keyboard.dismiss();
 
     if (!normalized.id || !normalized.pw) {
-      showToast("error", "아이디와 비밀번호를 입력해주세요");
+      showToast("error", "아이디 및 비밀번호를 입력해주세요");
       return;
     }
-
-    let loggedInUser: LoginResponse | null = null;
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
@@ -180,19 +187,14 @@ export default function LoginScreen() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      loggedInUser = (await response.json()) as LoginResponse;
+      const loggedInUser = (await response.json()) as LoginResponse;
+      await saveLoginState(loggedInUser);
     } catch (error) {
       console.log("백엔드 로그인 실패", error);
       showToast("error", "아이디 또는 비밀번호가 올바르지 않습니다");
       await AsyncStorage.removeItem(STORAGE_KEYS.currentUserId);
       await AsyncStorage.removeItem(STORAGE_KEYS.currentUserRole);
       return;
-    }
-
-    try {
-      await saveLoginState(loggedInUser);
-    } catch {
-      // ignore
     }
 
     await login();
@@ -207,13 +209,26 @@ export default function LoginScreen() {
     const isError = toastType === "error";
     const isSuccess = toastType === "success";
 
-    return {
-      iconName: isError ? "alert-circle" : isSuccess ? "checkmark-circle" : "information-circle",
-      iconColor: isError ? COLORS.danger : isSuccess ? COLORS.success : COLORS.text,
-      bg: isError ? "rgba(255, 235, 235, 0.92)" : "rgba(235, 255, 243, 0.92)",
-      border: isError ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)",
-      textColor: isError ? "#B91C1C" : "#047857",
-    };
+    const iconName = isError
+      ? "alert-circle"
+      : isSuccess
+      ? "checkmark-circle"
+      : "information-circle";
+    const iconColor = isError
+      ? COLORS.danger
+      : isSuccess
+      ? COLORS.success
+      : COLORS.text;
+
+    const bg = isError
+      ? "rgba(255, 235, 235, 0.92)"
+      : "rgba(235, 255, 243, 0.92)";
+    const border = isError
+      ? "rgba(239,68,68,0.35)"
+      : "rgba(34,197,94,0.35)";
+    const textColor = isError ? "#B91C1C" : "#047857";
+
+    return { iconName, iconColor, bg, border, textColor };
   }, [toastType]);
 
   return (
@@ -239,11 +254,25 @@ export default function LoginScreen() {
             },
           ]}
         >
-          <View style={[styles.toastBox, { backgroundColor: toastUI.bg, borderColor: toastUI.border }]}>
-            <Ionicons name={toastUI.iconName as any} size={22} color={toastUI.iconColor} />
-            <Text style={[styles.toastText, { color: toastUI.textColor }]} numberOfLines={2}>
-              {toastText}
-            </Text>
+          <View
+            style={[
+              styles.toastBox,
+              { backgroundColor: toastUI.bg, borderColor: toastUI.border },
+            ]}
+          >
+            <View style={styles.toastContent}>
+              <Ionicons
+                name={toastUI.iconName as any}
+                size={20}
+                color={toastUI.iconColor}
+              />
+              <Text
+                style={[styles.toastText, { color: toastUI.textColor }]}
+                numberOfLines={1}
+              >
+                {toastText}
+              </Text>
+            </View>
           </View>
         </Animated.View>
       )}
@@ -251,10 +280,14 @@ export default function LoginScreen() {
       <View style={styles.container}>
         <View style={styles.logoWrap}>
           <View style={styles.logoCircle}>
-            <Ionicons name="shield-checkmark" size={26} color={COLORS.primary} />
+            <Ionicons
+              name="shield-checkmark"
+              size={23}
+              color={COLORS.primary}
+            />
           </View>
           <Text style={styles.brand}>안심톡톡</Text>
-          <Text style={styles.slogan}>우리 아이 안전 동행</Text>
+          <Text style={styles.slogan}>우리 아이의 안전한 동행</Text>
         </View>
 
         <View style={styles.card}>
@@ -262,42 +295,79 @@ export default function LoginScreen() {
             placeholder="아이디"
             placeholderTextColor="#9CA3AF"
             value={id}
-            onChangeText={(text) => {
+            onChangeText={(t) => {
               if (toastVisible) dismissToast();
-              setId(text);
+              setId(t);
             }}
+            onFocus={onFocusInput}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.input}
             returnKeyType="next"
+            onSubmitEditing={() => pwInputRef.current?.focus()}
           />
 
-          <View style={styles.pwRow}>
+          <Pressable
+            style={styles.pwRow}
+            onPress={() => pwInputRef.current?.focus()}
+          >
+            <View style={[styles.input, styles.pwInputDisplay]}>
+              <Text
+                style={[
+                  styles.pwDisplayText,
+                  !pw && styles.pwPlaceholderText,
+                ]}
+                numberOfLines={1}
+              >
+                {pw ? (showPw ? pw : "●".repeat(pw.length)) : "비밀번호"}
+              </Text>
+            </View>
+
             <TextInput
-              placeholder="비밀번호"
-              placeholderTextColor="#9CA3AF"
+              ref={pwInputRef}
               value={pw}
-              onChangeText={(text) => {
+              onChangeText={(t) => {
                 if (toastVisible) dismissToast();
-                setPw(text);
+                setPw(t);
               }}
-              secureTextEntry={!showPw}
+              onFocus={onFocusInput}
+              secureTextEntry={false}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, styles.pwInput]}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+              keyboardType="default"
+              contextMenuHidden
+              caretHidden
+              style={styles.hiddenPwInput}
               returnKeyType="done"
               onSubmitEditing={onSubmit}
             />
 
-            <Pressable style={styles.eyeBtn} onPress={() => setShowPw((v) => !v)} hitSlop={8}>
-              <Ionicons name={showPw ? "eye" : "eye-off"} size={22} color="#6B7280" />
+            <Pressable
+              style={styles.eyeBtn}
+              onPress={() => setShowPw((v) => !v)}
+              hitSlop={8}
+            >
+              <Ionicons
+                name={showPw ? "eye" : "eye-off"}
+                size={22}
+                color="#6B7280"
+              />
             </Pressable>
-          </View>
+          </Pressable>
 
           <View style={styles.optionsRow}>
-            <Pressable style={styles.rememberRow} onPress={() => setRememberMe((v) => !v)} hitSlop={8}>
+            <Pressable
+              style={styles.rememberRow}
+              onPress={() => setRememberMe((v) => !v)}
+              hitSlop={8}
+            >
               <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
-                {rememberMe && <Ionicons name="checkmark" size={16} color="#fff" />}
+                {rememberMe && (
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                )}
               </View>
               <Text style={styles.rememberText}>자동 로그인</Text>
             </Pressable>
@@ -330,85 +400,148 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
+
   container: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 86,
-    paddingBottom: 26,
-    justifyContent: "flex-start",
+    paddingHorizontal: 36,
+    paddingTop: 20,
+    paddingBottom: 42,
+    justifyContent: "center",
   },
+
   toastWrap: {
     position: "absolute",
-    top: Platform.select({ ios: 56, android: 44, default: 44 }),
+    top: Platform.select({ ios: 36, android: 28, default: 28 }),
     left: 0,
     right: 0,
     alignItems: "center",
     zIndex: 50,
   },
+
   toastBox: {
-    width: "75%",
-    minHeight: 52,
+    alignSelf: "center",
+    minHeight: 46,
     borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
     borderWidth: 1,
     ...SHADOW.soft,
   },
+
+  toastContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
   toastText: {
-    flex: 1,
-    textAlign: "center",
+    marginLeft: 7,
     fontSize: 15,
     fontWeight: "800",
     lineHeight: 18,
   },
-  logoWrap: { alignItems: "center", marginBottom: 18 },
+
+  logoWrap: { alignItems: "center", marginBottom: 12 },
+
   logoCircle: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
-    marginTop: 67,
-    marginBottom: 10,
+    marginBottom: 7,
     ...SHADOW.soft,
   },
-  brand: { fontSize: 26, color: COLORS.primary, fontWeight: "900" },
-  slogan: { marginTop: 10, fontSize: 14, color: "rgba(17,24,39,0.55)", fontWeight: "700" },
+
+  brand: {
+    fontSize: 21,
+    color: COLORS.primary,
+    fontWeight: "900",
+  },
+
+  slogan: {
+    marginTop: 5,
+    fontSize: 12,
+    color: "rgba(17,24,39,0.55)",
+    fontWeight: "700",
+  },
+
   card: {
     alignSelf: "center",
     width: "100%",
-    maxWidth: 330,
-    marginTop: -8,
-    borderRadius: 18,
-    padding: 16,
-    ...SHADOW.card,
+    maxWidth: 280,
+    marginTop: 13,
+    borderRadius: 0,
+    padding: 0,
   },
+
   input: {
-    height: 54,
+    height: 46,
     backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingHorizontal: 16,
+    borderRadius: 13,
+    paddingHorizontal: 15,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    fontSize: 16,
+    borderColor: "rgba(0,0,0,0.06)",
+    fontSize: 14,
     color: COLORS.text,
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  pwRow: { position: "relative", justifyContent: "center", marginTop: -1, marginBottom: -1 },
-  pwInput: { paddingRight: 48 },
-  eyeBtn: { position: "absolute", right: 12, height: 54, justifyContent: "center", top: 0 },
+
+  pwRow: {
+    position: "relative",
+    justifyContent: "center",
+    marginTop: -1,
+    marginBottom: -1,
+  },
+
+  pwInputDisplay: {
+    paddingRight: 48,
+    justifyContent: "center",
+  },
+
+  pwDisplayText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: COLORS.text,
+  },
+
+  pwPlaceholderText: {
+    color: "#9CA3AF",
+  },
+
+  hiddenPwInput: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    opacity: 0,
+    color: "transparent",
+    backgroundColor: "transparent",
+  },
+
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    height: 46,
+    justifyContent: "center",
+    top: 0,
+  },
+
   optionsRow: {
-    marginTop: 2,
+    marginTop: 0,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    marginBottom: 10,
   },
-  rememberRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  rememberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
   checkbox: {
     width: 18,
     height: 18,
@@ -420,23 +553,72 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginLeft: 5,
     marginRight: -2,
+    position: "relative",
   },
-  checkboxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  rememberText: { fontSize: 14, fontWeight: "800", color: "#111827" },
-  findRow: { flexDirection: "row", alignItems: "center", marginRight: 3 },
-  findText: { fontSize: 12, fontWeight: "800", color: "rgba(17,24,39,0.55)" },
-  divider: { fontSize: 12, fontWeight: "900", color: "rgba(17,24,39,0.25)", marginHorizontal: 6 },
+
+  checkboxOn: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+
+  rememberText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  findRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 3,
+  },
+
+  findText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.55)",
+  },
+
+  divider: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.25)",
+    marginHorizontal: 6,
+  },
+
   loginBtn: {
-    height: 53,
-    borderRadius: 18,
+    height: 48,
+    borderRadius: 14,
     backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
     ...SHADOW.floating,
-    marginTop: 8,
+    marginTop: 6,
   },
-  loginBtnText: { color: "#fff", fontSize: 17, fontWeight: "900" },
-  signupBtn: { marginTop: 23, alignItems: "center", marginBottom: 5 },
-  signupText: { fontSize: 16, fontWeight: "900", color: "rgba(17,24,39,0.50)" },
-  footer: { marginTop: 20, textAlign: "center", color: "rgba(17,24,39,0.35)", fontWeight: "700" },
+
+  loginBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  signupBtn: {
+    marginTop: 20,
+    alignItems: "center",
+    marginBottom: 4,
+  },
+
+  signupText: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.50)",
+  },
+
+  footer: {
+    marginTop: 26,
+    textAlign: "center",
+    color: "rgba(17,24,39,0.28)",
+    fontWeight: "700",
+    fontSize: 13,
+  },
 });

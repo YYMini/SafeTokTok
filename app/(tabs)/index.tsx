@@ -1,21 +1,19 @@
 // app/(tabs)/index.tsx
 import Header from "@/components/Header";
-import { API_BASE_URL, isUsingLocalApiBaseUrl } from "@/constants/api";
-import { COLORS, RADIUS, SHADOW } from "@/constants/theme";
+import { API_BASE_URL } from "@/constants/api";
+import { COLORS, SHADOW } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
-import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Image,
   Keyboard,
-  Linking,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -25,8 +23,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
 
 declare global {
   interface Window {
@@ -38,10 +34,6 @@ type Target = {
   id: string;
   name: string;
   sub: string;
-  age?: number;
-  loginId?: string;
-  latitude?: number | null;
-  longitude?: number | null;
 };
 
 type Profile = {
@@ -50,73 +42,64 @@ type Profile = {
   email: string;
   phone: string;
   imageUri: string | null;
-  role?: "PARENT" | "CHILD" | "guardian" | "user";
+  role?: "user" | "guardian";
+  roleLabel?: string;
 };
 
-type ChildApiResponse = {
-  childId: number;
-  name: string;
-  age?: number | null;
-  loginId?: string;
-  latitude?: number | null;
-  longitude?: number | null;
-};
-
-type ConnectionApiResponse = {
-  id: number;
-  name: string;
-  age?: number | null;
-  loginId?: string;
-  role: "PARENT" | "CHILD";
-};
-
-type ChildDraft = {
-  name: string;
-  age: string;
-  loginId: string;
-  password: string;
+type FieldErrors = {
+  name?: string;
+  userId?: string;
+  email?: string;
+  phone?: string;
 };
 
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
+const ACCOUNT_ID_KEY = "authAccountId";
 const CURRENT_USER_ID_KEY = "currentUserId";
-const CURRENT_USER_ROLE_KEY = "currentUserRole";
+
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
   userId: "admin",
   email: "stt@naver.com",
   phone: "010-0000-0000",
   imageUri: null,
+  role: "guardian",
+  roleLabel: "보호자",
 };
 
-const DEFAULT_TARGETS: Target[] = [];
-
-type FieldErrors = {
-  userId?: string;
-  email?: string;
-  phone?: string;
-};
-
-type TooltipField = "userId" | "email" | "phone" | null;
+const DEFAULT_TARGETS: Target[] = [
+  { id: "m1", name: "김민준", sub: "7세 · 자녀" },
+  { id: "s1", name: "이서윤", sub: "5세 · 자녀" },
+];
 
 export default function TrackingDashboard() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [linkedTargets, setLinkedTargets] = useState<Target[]>(DEFAULT_TARGETS);
+  const [showLoginToast, setShowLoginToast] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    setShowLoginToast(true);
+
+    const timer = setTimeout(() => {
+      setShowLoginToast(false);
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     (async () => {
       try {
-        const [savedProfile, savedUserId, savedRole] = await Promise.all([
+        const [savedProfile, savedTargets, savedAccountId, savedUserId] = await Promise.all([
           AsyncStorage.getItem(PROFILE_KEY),
+          AsyncStorage.getItem(TARGETS_KEY),
+          AsyncStorage.getItem(ACCOUNT_ID_KEY),
           AsyncStorage.getItem(CURRENT_USER_ID_KEY),
-          AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
         ]);
 
         if (savedUserId) {
@@ -126,182 +109,41 @@ export default function TrackingDashboard() {
           }
         }
 
-        if (savedRole) {
-          setCurrentUserRole(savedRole);
-          if (savedRole === "CHILD") {
-            setLinkedTargets([]);
-            await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify([]));
-          }
-        }
-
         if (savedProfile) {
           const parsed = JSON.parse(savedProfile) as Partial<Profile>;
+
           setProfile({
             ...DEFAULT_PROFILE,
             ...parsed,
+            userId: savedAccountId ?? parsed.userId ?? DEFAULT_PROFILE.userId,
             phone: parsed.phone ?? DEFAULT_PROFILE.phone,
             imageUri: parsed.imageUri ?? null,
           });
+        } else if (savedAccountId) {
+          setProfile({
+            ...DEFAULT_PROFILE,
+            userId: savedAccountId,
+          });
         }
 
-        setLinkedTargets([]);
+        if (savedTargets) {
+          const parsedTargets = JSON.parse(savedTargets) as Target[];
+          if (Array.isArray(parsedTargets)) {
+            setLinkedTargets(parsedTargets);
+          }
+        }
       } catch {
         // ignore
       }
     })();
   }, []);
 
-  const toTarget = (child: ChildApiResponse): Target => ({
-    id: String(child.childId),
-    name: child.name,
-    sub: `${child.age ?? "-"}세 자녀`,
-    age: child.age ?? undefined,
-    loginId: child.loginId,
-    latitude: child.latitude,
-    longitude: child.longitude,
-  });
-
-  const toConnectionTarget = (connection: ConnectionApiResponse): Target => ({
-    id: `${connection.role}-${connection.id}`,
-    name: connection.name,
-    sub:
-      connection.role === "PARENT"
-        ? "부모"
-        : `${connection.age ?? "-"}세 자녀`,
-    age: connection.age ?? undefined,
-    loginId: connection.loginId,
-  });
-
-  const fetchChildren = async (parentId: number) => {
-    const response = await fetch(`${API_BASE_URL}/api/children`, {
-      headers: {
-        "X-User-Id": String(parentId),
-        "X-Login-Id": profile.userId,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const data = (await response.json()) as ChildApiResponse[];
-    if (Array.isArray(data)) {
-      await saveTargets(data.map(toTarget));
-    }
-  };
-
-  const fetchConnections = async (userId: number) => {
-    const response = await fetch(`${API_BASE_URL}/api/children/connections`, {
-      headers: {
-        "X-User-Id": String(userId),
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const data = (await response.json()) as ConnectionApiResponse[];
-    if (Array.isArray(data)) {
-      await saveTargets(data.map(toConnectionTarget));
-    }
-  };
-
-  useEffect(() => {
-    if (!currentUserId || currentUserRole !== "PARENT") return;
-
-    fetchChildren(currentUserId).catch((error) => {
-      console.log("자녀 목록 조회 실패", error);
-    });
-  }, [currentUserId, currentUserRole, profile.userId]);
-
-  useEffect(() => {
-    if (!currentUserId || currentUserRole !== "CHILD") return;
-
-    fetchConnections(currentUserId).catch((error) => {
-      console.log("연결 대상자 조회 실패", error);
-      saveTargets([]).catch(() => {
-        // ignore
-      });
-    });
-  }, [currentUserId, currentUserRole]);
-
-  const addChild = async (child: ChildDraft): Promise<Target> => {
-    if (!currentUserId && !profile.userId) {
-      Alert.alert("자녀 추가 실패", "로그인 사용자 정보를 찾을 수 없습니다.");
-      throw new Error("Missing current user id");
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/children`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(currentUserId ? { "X-User-Id": String(currentUserId) } : {}),
-        "X-Login-Id": profile.userId,
-      },
-      body: JSON.stringify({
-        name: child.name.trim(),
-        age: Number(child.age),
-        loginId: child.loginId.trim(),
-        password: child.password,
-      }),
-    });
-
-    if (!response.ok) {
-      let message = `자녀 추가에 실패했습니다. (HTTP ${response.status})`;
-      try {
-        const errorBody = await response.json();
-        if (typeof errorBody?.message === "string") {
-          message = errorBody.message;
-        }
-      } catch {
-        // ignore
-      }
-      throw new Error(message);
-    }
-
-    const created = (await response.json()) as ChildApiResponse;
-    const createdTarget = toTarget(created);
-    const nextTargets = [...linkedTargets, createdTarget];
-    await saveTargets(nextTargets);
-    return createdTarget;
-  };
-
-  const deleteChild = async (target: Target) => {
-    const childId = Number(target.id);
-    if (!Number.isFinite(childId)) {
-      throw new Error("삭제할 자녀 정보를 확인할 수 없습니다.");
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/children/${childId}`, {
-      method: "DELETE",
-      headers: {
-        ...(currentUserId ? { "X-User-Id": String(currentUserId) } : {}),
-        "X-Login-Id": profile.userId,
-      },
-    });
-
-    if (!response.ok) {
-      let message = `자녀 삭제에 실패했습니다. (HTTP ${response.status})`;
-      try {
-        const errorBody = await response.json();
-        if (typeof errorBody?.message === "string") {
-          message = errorBody.message;
-        }
-      } catch {
-        // ignore
-      }
-      throw new Error(message);
-    }
-
-    const nextTargets = linkedTargets.filter((item) => item.id !== target.id);
-    await saveTargets(nextTargets);
-  };
-
   const saveProfile = async (next: Profile) => {
     setProfile(next);
+
     try {
       await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+      await AsyncStorage.setItem(ACCOUNT_ID_KEY, next.userId.trim());
     } catch {
       Alert.alert("저장 실패", "프로필 설정을 저장하지 못했어요.");
     }
@@ -309,6 +151,7 @@ export default function TrackingDashboard() {
 
   const saveTargets = async (next: Target[]) => {
     setLinkedTargets(next);
+
     try {
       await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify(next));
     } catch {
@@ -319,20 +162,28 @@ export default function TrackingDashboard() {
   const logout = async () => {
     try {
       await AsyncStorage.setItem(LOGIN_KEY, "false");
-      await AsyncStorage.removeItem(CURRENT_USER_ID_KEY);
-      await AsyncStorage.removeItem(CURRENT_USER_ROLE_KEY);
     } catch {
       // ignore
     }
+
     setProfileOpen(false);
     router.replace("/(auth)/login");
   };
 
   return (
     <View style={styles.safe}>
-      <StatusBar style="light" />
+      {showLoginToast && (
+        <View style={styles.loginToastWrap}>
+          <View style={styles.loginToastBox}>
+            <Ionicons name="checkmark-circle" size={20} color="#22C55E" />
+            <Text style={styles.loginToastText}>로그인이 성공했습니다.</Text>
+          </View>
+        </View>
+      )}
 
-      <View style={[styles.topBar, { paddingTop: insets.top }]}>
+      <StatusBar hidden />
+
+      <View style={styles.topBar}>
         <Header
           roleLabel={profile.name}
           showLogout={false}
@@ -343,7 +194,12 @@ export default function TrackingDashboard() {
       </View>
 
       <View style={styles.body}>
-        <MapPlaceholder currentUserId={currentUserId} currentUserRole={currentUserRole} />
+        <MapPlaceholder
+          profile={profile}
+          linkedTargets={linkedTargets}
+          onSaveTargets={saveTargets}
+          currentUserId={currentUserId}
+        />
       </View>
 
       <ProfileModal
@@ -353,9 +209,6 @@ export default function TrackingDashboard() {
         profile={profile}
         onSaveProfile={saveProfile}
         onSaveTargets={saveTargets}
-        onAddChild={addChild}
-        onDeleteChild={deleteChild}
-        canManageChildren={currentUserRole === "PARENT"}
         onPressSave={() => setProfileOpen(false)}
         onPressLogout={logout}
       />
@@ -364,117 +217,127 @@ export default function TrackingDashboard() {
 }
 
 function MapPlaceholder({
+  profile,
+  linkedTargets,
+  onSaveTargets,
   currentUserId,
-  currentUserRole,
 }: {
+  profile: Profile;
+  linkedTargets: Target[];
+  onSaveTargets: (targets: Target[]) => Promise<void> | void;
   currentUserId: number | null;
-  currentUserRole: string | null;
 }) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
-  const mobileWebViewRef = useRef<WebView>(null);
   const markersRef = useRef<any[]>([]);
   const overlaysRef = useRef<any[]>([]);
+  const routeLineRef = useRef<any>(null);
+  const routeOverlayRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<number | null>(null);
-  const latestUserIdRef = useRef<number | null>(currentUserId);
-  const latestUserRoleRef = useRef<string | null>(currentUserRole);
-  const hasRenderedMarkersRef = useRef(false);
+
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
+  const [showRouteInfo, setShowRouteInfo] = useState(false);
+  const [mapMode, setMapMode] = useState<"default" | "satellite" | "roadview">(
+    "default",
+  );
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
+  const [sosActive, setSosActive] = useState(false);
+  const [dangerNoticeVisible, setDangerNoticeVisible] = useState(true);
+  const [mockZoom, setMockZoom] = useState(1);
+  const [mockPan, setMockPan] = useState({ x: 0, y: 0 });
 
-  const mobileMapHtml = `
-    <!doctype html>
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <style>
-          html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
-        </style>
-        <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=d74e3a0d741775a29ef17516bf90fe89&autoload=false"></script>
-      </head>
-      <body>
-        <div id="map"></div>
-        <script>
-          var map;
-          var markers = [];
-          var overlays = [];
+  const isUserRole = profile.role === "user";
 
-          function clearMarkers() {
-            markers.forEach(function(marker) { marker.setMap(null); });
-            overlays.forEach(function(overlay) { overlay.setMap(null); });
-            markers = [];
-            overlays = [];
-          }
+  // 현재 위험 상황이 발생한 대상자 기준값
+  // 나중에 실제 알림/서버 연동 시 이 객체만 위험 대상자 데이터로 바꾸면
+  // SOS 문구, 위험 아이콘, 길 안내 도착지가 모두 같은 대상자를 따라갑니다.
+  const dangerTarget: DangerTarget = {
+    id: linkedTargets[0]?.id ?? "m1",
+    name: linkedTargets[0]?.name ?? "김민준",
+    x: 70,
+    y: 280,
+    markerSize: 38,
+    latitude: 37.5702,
+    longitude: 126.9818,
+  };
 
-          function escapeHtml(value) {
-            return String(value || '')
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;')
-              .replace(/'/g, '&#39;');
-          }
+  const dangerTargetName = dangerTarget.name;
+  const sosName = dangerTarget.name;
 
-          function renderTargets(targets) {
-            if (!map || !Array.isArray(targets)) return;
-            if (targets.length === 0 && markers.length > 0) return;
-            clearMarkers();
+  const guardianPosition = { latitude: 37.5665, longitude: 126.978 };
+  const dangerPosition = {
+    latitude: dangerTarget.latitude,
+    longitude: dangerTarget.longitude,
+  };
 
-            var bounds = new kakao.maps.LatLngBounds();
+  const clearWebRoute = () => {
+    if (routeLineRef.current) {
+      routeLineRef.current.setMap(null);
+      routeLineRef.current = null;
+    }
 
-            targets.forEach(function(target) {
-              var position = new kakao.maps.LatLng(target.latitude, target.longitude);
-              var marker = new kakao.maps.Marker({ position: position, map: map });
-              var overlay = new kakao.maps.CustomOverlay({
-                position: position,
-                yAnchor: 2.2,
-                content: '<div style="background:white;border:1px solid #2563eb;border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:#2563eb;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
-              });
-              overlay.setMap(map);
-              markers.push(marker);
-              overlays.push(overlay);
-              bounds.extend(position);
-            });
+    if (routeOverlayRef.current) {
+      routeOverlayRef.current.setMap(null);
+      routeOverlayRef.current = null;
+    }
+  };
 
-            if (targets.length === 1) {
-              map.setCenter(bounds.getSouthWest());
-              map.setLevel(3);
-            } else if (targets.length > 1) {
-              map.setBounds(bounds);
-            }
-          }
+  const drawWebRoute = () => {
+    if (!window.kakao?.maps || !mapInstanceRef.current) return;
 
-          document.addEventListener('message', function(event) {
-            try {
-              var payload = JSON.parse(event.data);
-              if (payload.type === 'markers') renderTargets(payload.targets);
-            } catch (e) {}
-          });
+    clearWebRoute();
 
-          window.addEventListener('message', function(event) {
-            try {
-              var payload = JSON.parse(event.data);
-              if (payload.type === 'markers') renderTargets(payload.targets);
-            } catch (e) {}
-          });
+    const guardianLatLng = new window.kakao.maps.LatLng(
+      guardianPosition.latitude,
+      guardianPosition.longitude,
+    );
+    const dangerLatLng = new window.kakao.maps.LatLng(
+      dangerPosition.latitude,
+      dangerPosition.longitude,
+    );
 
-          kakao.maps.load(function() {
-            map = new kakao.maps.Map(document.getElementById('map'), {
-              center: new kakao.maps.LatLng(37.5665, 126.9780),
-              level: 3
-            });
-            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
-          });
-        </script>
-      </body>
-    </html>
-  `;
+    routeLineRef.current = new window.kakao.maps.Polyline({
+      map: mapInstanceRef.current,
+      path: [guardianLatLng, dangerLatLng],
+      strokeWeight: 5,
+      strokeColor: "#2563EB",
+      strokeOpacity: 0.85,
+      strokeStyle: "solid",
+    });
 
-  useEffect(() => {
-    latestUserIdRef.current = currentUserId;
-    latestUserRoleRef.current = currentUserRole;
-  }, [currentUserId, currentUserRole]);
+    const infoPosition = new window.kakao.maps.LatLng(
+      (guardianPosition.latitude + dangerPosition.latitude) / 2,
+      (guardianPosition.longitude + dangerPosition.longitude) / 2,
+    );
+
+    routeOverlayRef.current = new window.kakao.maps.CustomOverlay({
+      position: infoPosition,
+      content: `
+        <div style="
+          background:#ffffff;
+          border:1px solid rgba(37,99,235,0.25);
+          border-radius:10px;
+          padding:7px 10px;
+          box-shadow:0 4px 12px rgba(15,23,42,0.18);
+          font-size:12px;
+          color:#111827;
+          font-weight:700;
+          white-space:nowrap;
+        ">
+          <div style="color:#2563EB;font-weight:900;margin-bottom:2px;">도보 8분</div>
+          <div>520m · 남동쪽</div>
+        </div>
+      `,
+      yAnchor: 1.1,
+    });
+
+    routeOverlayRef.current.setMap(mapInstanceRef.current);
+    mapInstanceRef.current.setBounds(
+      new window.kakao.maps.LatLngBounds(guardianLatLng, dangerLatLng),
+    );
+  };
 
   const renderMarkers = (
     targets: {
@@ -492,69 +355,37 @@ function MapPlaceholder({
     markersRef.current = [];
     overlaysRef.current = [];
 
-    const escapeHtml = (value: string) =>
-      value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-
-    const groups = new Map<
-      string,
-      {
-        latitude: number;
-        longitude: number;
-        targets: typeof targets;
-      }
-    >();
-
     targets.forEach((target) => {
-      const key = `${target.latitude.toFixed(4)},${target.longitude.toFixed(4)}`;
-      const group = groups.get(key);
-      if (group) {
-        const nextCount = group.targets.length + 1;
-        group.latitude =
-          (group.latitude * group.targets.length + target.latitude) / nextCount;
-        group.longitude =
-          (group.longitude * group.targets.length + target.longitude) / nextCount;
-        group.targets.push(target);
-      } else {
-        groups.set(key, {
-          latitude: target.latitude,
-          longitude: target.longitude,
-          targets: [target],
-        });
-      }
-    });
-
-    groups.forEach((group) => {
       const position = new window.kakao.maps.LatLng(
-        group.latitude,
-        group.longitude,
+        target.latitude,
+        target.longitude,
       );
-      const isGroup = group.targets.length > 1;
-      const labelText = isGroup
-        ? `${group.targets.length}명`
-        : escapeHtml(group.targets[0].name);
 
       const marker = new window.kakao.maps.Marker({
         position,
         map: mapInstanceRef.current,
       });
+
+      const isDanger = target.name === dangerTargetName;
       const content = `
-        <div style="
-          background: white;
-          border: 1px solid #2563eb;
-          border-radius: 12px;
-          padding: 4px 8px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #2563eb;
-          white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-        ">
-          ${labelText}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+          ${
+            isDanger
+              ? `<div style="width:26px;height:26px;border-radius:13px;background:#FF2F45;color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 2px 8px rgba(255,47,69,0.45);">!</div>`
+              : ""
+          }
+          <div style="
+            background: ${isDanger ? "#F04A16" : "#12B85C"};
+            border-radius: 9px;
+            padding: 4px 9px;
+            font-size: 12px;
+            font-weight: 800;
+            color: white;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+          ">
+            ${target.name}
+          </div>
         </div>
       `;
 
@@ -566,66 +397,11 @@ function MapPlaceholder({
 
       overlay.setMap(mapInstanceRef.current);
 
-      if (isGroup) {
-        const names = group.targets
-          .map((target) => `<li style="padding:2px 0;">${escapeHtml(target.name)}</li>`)
-          .join("");
-        const popup = new window.kakao.maps.CustomOverlay({
-          position,
-          yAnchor: 1.75,
-          zIndex: 4,
-          content: `
-            <div style="
-              min-width: 120px;
-              background: white;
-              border: 1px solid rgba(37,99,235,0.35);
-              border-radius: 12px;
-              padding: 8px 10px;
-              box-shadow: 0 4px 14px rgba(0,0,0,0.18);
-              font-size: 12px;
-              color: #111827;
-            ">
-              <div style="font-weight: 800; color: #2563eb; margin-bottom: 4px;">이 위치의 대상자</div>
-              <ul style="list-style:none; margin:0; padding:0;">${names}</ul>
-            </div>
-          `,
-        });
-
-        window.kakao.maps.event.addListener(marker, "click", () => {
-          const isOpen = overlaysRef.current.includes(popup);
-          overlaysRef.current
-            .filter((item) => item.__groupPopup)
-            .forEach((item) => item.setMap(null));
-          overlaysRef.current = overlaysRef.current.filter((item) => !item.__groupPopup);
-
-          if (!isOpen) {
-            popup.__groupPopup = true;
-            popup.setMap(mapInstanceRef.current);
-            overlaysRef.current.push(popup);
-          }
-        });
-      }
-
       markersRef.current.push(marker);
       overlaysRef.current.push(overlay);
     });
   };
 
-  const renderMobileMarkers = (
-    targets: {
-      childId: number;
-      name: string;
-      latitude: number;
-      longitude: number;
-    }[],
-  ) => {
-    mobileWebViewRef.current?.postMessage(
-      JSON.stringify({
-        type: "markers",
-        targets,
-      }),
-    );
-  };
   const getChildIdFromUrl = () => {
     if (Platform.OS !== "web") return 1;
 
@@ -635,212 +411,144 @@ function MapPlaceholder({
   };
 
   const childId = getChildIdFromUrl();
-
-  const isLocalHostname = (hostname: string) =>
-    ["localhost", "127.0.0.1", "::1"].includes(hostname);
-
-  const getApiAddressHint = () => {
-    const apiUrl = API_BASE_URL.toLowerCase();
-
-    if (
-      Platform.OS === "web" &&
-      isUsingLocalApiBaseUrl() &&
-      !isLocalHostname(window.location.hostname)
-    ) {
-      return "현재 API 주소가 localhost라서 이 화면에서는 백엔드에 연결할 수 없습니다. .env에 EXPO_PUBLIC_API_BASE_URL을 Railway 백엔드 주소로 설정해주세요.";
-    }
-
-    return "백엔드 서버 주소와 Railway 배포 상태를 확인해주세요.";
-  };
-
-  const getGeolocationErrorMessage = (err: GeolocationPositionError) => {
-    if (err.code === err.PERMISSION_DENIED) {
-      return "위치 권한이 거부되었습니다. 브라우저 주소창의 위치 권한을 허용해주세요.";
-    }
-
-    if (err.code === err.POSITION_UNAVAILABLE) {
-      return "현재 기기에서 위치를 계산하지 못했습니다. GPS/Wi-Fi 위치 서비스를 켠 뒤 다시 시도해주세요.";
-    }
-
-    if (err.code === err.TIMEOUT) {
-      return "위치 정보를 가져오는 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.";
-    }
-
-    return `위치 정보를 가져오지 못했습니다. (${err.message})`;
-  };
+  const apiUserId = currentUserId ?? childId;
 
   const sendLocationToServer = async (lat: number, lng: number) => {
     try {
-      if (!currentUserId || currentUserRole !== "CHILD") {
-        return false;
-      }
-
-      const response = await fetch(`${API_BASE_URL}/api/locations`, {
+      await fetch(`${API_BASE_URL}/api/locations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": String(currentUserId),
+          "X-User-Id": String(apiUserId),
         },
         body: JSON.stringify({
-          childId: currentUserId,
+          childId: apiUserId,
           latitude: lat,
           longitude: lng,
         }),
       });
-
-      if (!response.ok) {
-        let message = `HTTP ${response.status}`;
-        try {
-          const errorBody = await response.json();
-          if (typeof errorBody?.message === "string") {
-            message = errorBody.message;
-          }
-        } catch {
-          // ignore
-        }
-        throw new Error(message);
-      }
-
-      setErrorText("");
-      return true;
     } catch (error) {
-      console.log("위치 저장 실패", error);
-      setErrorText(
-        error instanceof Error
-          ? `위치 저장 실패: ${error.message}`
-          : `위치 저장 실패: ${getApiAddressHint()}`,
-      );
-      return false;
+      console.log("위치 전송 실패", error);
     }
   };
 
   const fetchLatestLocations = async () => {
     try {
-      const userId = latestUserIdRef.current;
-      if (!userId) {
-        return;
-      }
-
       const response = await fetch(`${API_BASE_URL}/api/locations/latest`, {
         headers: {
-          "X-User-Id": String(userId),
+          "X-User-Id": String(apiUserId),
         },
       });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
       const data = await response.json();
 
-      console.log("받은 latest 데이터", data);
-
       if (Array.isArray(data) && data.length > 0) {
-        if (Platform.OS === "web") {
-          renderMarkers(data);
-        } else {
-          renderMobileMarkers(data);
-        }
-        hasRenderedMarkersRef.current = true;
-        setIsReady(true);
-      } else if (!hasRenderedMarkersRef.current) {
+        renderMarkers(data);
         setIsReady(true);
       }
     } catch (error) {
       console.log("최신 위치 조회 실패", error);
-      setErrorText(`최신 위치 조회 실패: ${getApiAddressHint()}`);
     }
   };
 
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    if (!currentUserId || !mapInstanceRef.current) return;
+  const zoomIn = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current) {
+      mapInstanceRef.current.setLevel(
+        Math.max(1, mapInstanceRef.current.getLevel() - 1),
+      );
+      return;
+    }
 
-    fetchLatestLocations();
-  }, [currentUserId]);
+    setMockZoom((prev) => Math.min(prev + 0.12, 1.28));
+  };
 
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    if (!currentUserId) return;
+  const zoomOut = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current) {
+      mapInstanceRef.current.setLevel(
+        Math.min(14, mapInstanceRef.current.getLevel() + 1),
+      );
+      return;
+    }
 
-    let locationSubscription: Location.LocationSubscription | null = null;
-    let latestInterval: ReturnType<typeof setInterval> | null = null;
-    let isMounted = true;
+    setMockZoom((prev) => Math.max(prev - 0.12, 0.9));
+  };
 
-    const startMobileMap = async () => {
-      await fetchLatestLocations();
+  const fitMap = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
+      mapInstanceRef.current.setCenter(
+        new window.kakao.maps.LatLng(37.5665, 126.978),
+      );
+      mapInstanceRef.current.setLevel(3);
+      return;
+    }
 
-      latestInterval = setInterval(() => {
-        fetchLatestLocations();
-      }, 3000);
+    setMockZoom(1);
+    setMockPan({ x: 0, y: 0 });
+  };
 
-      if (currentUserRole !== "CHILD") {
-        setIsReady(true);
-        return;
+  const moveToGuardian = () => {
+    // 우측 세 번째 위치 아이콘은 현재 목업 화면 기준 "화면 맞춤"으로 동작
+    // 지도 배경만 초기화하고, 지오펜스/대상자/보호자 프로필 위치는 그대로 유지
+    fitMap();
+  };
+
+  const handleToggleRoute = () => {
+    setShowRouteInfo((prev) => {
+      const next = !prev;
+
+      if (Platform.OS === "web") {
+        setTimeout(() => {
+          if (next) drawWebRoute();
+          else clearWebRoute();
+        }, 0);
       }
 
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== "granted") {
-        setErrorText("위치 권한이 필요합니다. 휴대폰 설정에서 위치 권한을 허용해주세요.");
-        setIsReady(true);
-        return;
-      }
-
-      const current = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      if (!isMounted) return;
-
-      await sendLocationToServer(
-        current.coords.latitude,
-        current.coords.longitude,
-      );
-      await fetchLatestLocations();
-      setIsReady(true);
-
-      locationSubscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 3000,
-          distanceInterval: 3,
-        },
-        (location) => {
-          sendLocationToServer(
-            location.coords.latitude,
-            location.coords.longitude,
-          );
-        },
-      );
-    };
-
-    startMobileMap().catch((error) => {
-      console.log("모바일 지도 초기화 실패", error);
-      setErrorText("모바일 지도를 초기화하지 못했습니다.");
-      setIsReady(true);
+      return next;
     });
+  };
 
-    return () => {
-      isMounted = false;
-      locationSubscription?.remove();
-      if (latestInterval) {
-        clearInterval(latestInterval);
-      }
-    };
-  }, [currentUserId, currentUserRole]);
+  const openSatelliteMode = () => {
+    setMapMode("satellite");
+
+    if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
+      mapInstanceRef.current.addOverlayMapTypeId(
+        window.kakao.maps.MapTypeId.SKYVIEW,
+      );
+    }
+  };
+
+  const openRoadViewMode = () => {
+    setMapMode("roadview");
+  };
+
+  const closeModeScreen = () => {
+    if (
+      Platform.OS === "web" &&
+      mapMode === "satellite" &&
+      mapInstanceRef.current &&
+      window.kakao?.maps
+    ) {
+      mapInstanceRef.current.removeOverlayMapTypeId(
+        window.kakao.maps.MapTypeId.SKYVIEW,
+      );
+    }
+
+    setMapMode("default");
+  };
+
+  const handleAddTarget = async (target: Target) => {
+    await onSaveTargets([...linkedTargets, target]);
+    setTargetModalOpen(false);
+  };
+
+  const handlePressSOS = () => {
+    setSosActive(true);
+    setDangerNoticeVisible(true);
+  };
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
 
     const startGeolocation = () => {
-      if (
-        !window.isSecureContext &&
-        !isLocalHostname(window.location.hostname)
-      ) {
-        setErrorText(
-          "브라우저 위치 정보는 HTTPS 또는 localhost에서만 작동합니다. Expo Web은 localhost로 열거나 HTTPS 배포 주소에서 실행해주세요.",
-        );
-        return;
-      }
-
       if (!navigator.geolocation) {
         setErrorText("이 브라우저는 위치 정보를 지원하지 않습니다.");
         return;
@@ -849,17 +557,12 @@ function MapPlaceholder({
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          if (
-            latestUserRoleRef.current === "CHILD" &&
-            latestUserIdRef.current
-          ) {
-            await sendLocationToServer(latitude, longitude);
-          }
+          await sendLocationToServer(latitude, longitude);
           await fetchLatestLocations();
           setIsReady(true);
         },
         (err) => {
-          setErrorText(getGeolocationErrorMessage(err));
+          setErrorText(`현재 위치를 가져오지 못했습니다. (${err.message})`);
         },
         {
           enableHighAccuracy: true,
@@ -868,25 +571,20 @@ function MapPlaceholder({
         },
       );
 
-      if (
-        latestUserRoleRef.current === "CHILD" &&
-        latestUserIdRef.current
-      ) {
-        watchIdRef.current = navigator.geolocation.watchPosition(
-          async (pos) => {
-            const { latitude, longitude } = pos.coords;
-            await sendLocationToServer(latitude, longitude);
-          },
-          (err) => {
-            setErrorText(getGeolocationErrorMessage(err));
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 3000,
-          },
-        );
-      }
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        async (pos) => {
+          const { latitude, longitude } = pos.coords;
+          await sendLocationToServer(latitude, longitude);
+        },
+        (err) => {
+          setErrorText(`위치 추적 실패: ${err.message}`);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 3000,
+        },
+      );
     };
 
     const initMap = () => {
@@ -903,7 +601,6 @@ function MapPlaceholder({
       );
 
       startGeolocation();
-
       fetchLatestLocations();
 
       intervalIdRef.current = window.setInterval(() => {
@@ -937,246 +634,860 @@ function MapPlaceholder({
       if (existingScript) {
         existingScript.removeEventListener("load", onLoad);
       }
+
+      clearWebRoute();
+
       if (watchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
+
       if (intervalIdRef.current !== null) {
         clearInterval(intervalIdRef.current);
       }
     };
-  }, [currentUserId, currentUserRole]);
+  }, []);
 
-  if (Platform.OS !== "web") {
-    return (
-      <View style={styles.map}>
-        {!isReady && !errorText && (
-          <ActivityIndicator
-            size="large"
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              marginLeft: -18,
-              marginTop: -18,
-              zIndex: 2,
-            }}
+  return (
+    <View style={styles.map}>
+      {Platform.OS === "web" ? (
+        <>
+          {!isReady && !errorText && (
+            <ActivityIndicator size="large" style={styles.mapLoading} />
+          )}
+
+          {!!errorText && (
+            <View style={styles.mapErrorBox}>
+              <Text>{errorText}</Text>
+            </View>
+          )}
+
+          <div
+            ref={mapContainerRef}
+            style={{ width: "100%", height: "100%" }}
           />
-        )}
-
-        {!!errorText && (
-          <View
-            style={{
-              position: "absolute",
-              top: 16,
-              left: 16,
-              right: 16,
-              zIndex: 3,
-              backgroundColor: "white",
-              padding: 12,
-              borderRadius: 12,
-            }}
-          >
-            <Text>{errorText}</Text>
-          </View>
-        )}
-
-        <WebView
-          ref={mobileWebViewRef}
-          source={{ html: mobileMapHtml }}
-          originWhitelist={["*"]}
-          javaScriptEnabled
-          domStorageEnabled
-          mixedContentMode="always"
-          onMessage={(event) => {
-            try {
-              const payload = JSON.parse(event.nativeEvent.data);
-              if (payload.type === "ready") {
-                fetchLatestLocations();
-              }
-            } catch {
-              // ignore
-            }
-          }}
-          style={{ flex: 1, backgroundColor: "#DCEEFF" }}
+        </>
+      ) : (
+        <MockMap
+          showRouteInfo={showRouteInfo}
+          mapMode={mapMode}
+          dangerNoticeVisible={dangerNoticeVisible}
+          sosActive={sosActive}
+          sosName={sosName}
+          dangerTargetName={dangerTargetName}
+          dangerTarget={dangerTarget}
+          isUserRole={isUserRole}
+          zoom={mockZoom}
+          pan={mockPan}
+          onPan={setMockPan}
+          onToggleRoute={handleToggleRoute}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onFit={fitMap}
+          onOpenSatelliteMode={openSatelliteMode}
+          onOpenRoadViewMode={openRoadViewMode}
+          onCloseModeScreen={closeModeScreen}
+          onMoveToGuardian={moveToGuardian}
+          onOpenTargetModal={() => setTargetModalOpen(true)}
+          onPressSOS={handlePressSOS}
+          onCloseNotice={() => setDangerNoticeVisible(false)}
         />
-      </View>
+      )}
+
+      {Platform.OS === "web" && (
+        <>
+          <MapOverlayControls
+            showRouteInfo={showRouteInfo}
+            mapMode={mapMode}
+            dangerNoticeVisible={dangerNoticeVisible}
+            sosActive={sosActive}
+            sosName={sosName}
+            dangerTargetName={dangerTargetName}
+            dangerTarget={dangerTarget}
+            isUserRole={isUserRole}
+            onToggleRoute={handleToggleRoute}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onFit={fitMap}
+            onOpenSatelliteMode={openSatelliteMode}
+            onOpenRoadViewMode={openRoadViewMode}
+            onCloseModeScreen={closeModeScreen}
+            onMoveToGuardian={moveToGuardian}
+            onOpenTargetModal={() => setTargetModalOpen(true)}
+            onPressSOS={handlePressSOS}
+            onCloseNotice={() => setDangerNoticeVisible(false)}
+          />
+        </>
+      )}
+
+      <TargetRegisterModal
+        visible={targetModalOpen}
+        onClose={() => setTargetModalOpen(false)}
+        onRegister={handleAddTarget}
+      />
+    </View>
+  );
+}
+
+type MapMode = "default" | "satellite" | "roadview";
+
+type DangerTarget = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  markerSize: number;
+  latitude: number;
+  longitude: number;
+};
+
+type DangerAlert = {
+  id: string;
+  type: "sos" | "geofence" | "heart";
+  title: string;
+  timeText: string;
+};
+
+type MapOverlayProps = {
+  showRouteInfo: boolean;
+  mapMode: MapMode;
+  dangerNoticeVisible: boolean;
+  sosActive: boolean;
+  sosName: string;
+  dangerTargetName: string;
+  dangerTarget: DangerTarget;
+  isUserRole: boolean;
+  onToggleRoute: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFit: () => void;
+  onOpenSatelliteMode: () => void;
+  onOpenRoadViewMode: () => void;
+  onCloseModeScreen: () => void;
+  onMoveToGuardian: () => void;
+  onOpenTargetModal: () => void;
+  onPressSOS: () => void;
+  onCloseNotice: () => void;
+};
+
+type MockMapProps = MapOverlayProps & {
+  zoom: number;
+  pan: { x: number; y: number };
+  onPan: (pan: { x: number; y: number }) => void;
+};
+
+function MockMap(props: MockMapProps) {
+  const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  const [dangerPopupOpen, setDangerPopupOpen] = useState(false);
+  const [isDraggingMap, setIsDraggingMap] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+
+  // 현재는 목업 데이터지만, 추후 서버/센서 데이터가 들어오면
+  // 이 배열만 실시간 데이터로 교체하면 팝업 내용이 자동 반영됩니다.
+  const recentDangerAlerts: DangerAlert[] = [
+    {
+      id: "alert_sos",
+      type: "sos",
+      title: `${props.dangerTarget.name} SOS 요청`,
+      timeText: "5분 전",
+    },
+    {
+      id: "alert_geofence",
+      type: "geofence",
+      title: "안전구역 이탈",
+      timeText: "15분 전",
+    },
+    {
+      id: "alert_heart",
+      type: "heart",
+      title: "심박수 이상",
+      timeText: "30분 전",
+    },
+  ];
+
+  const startMapDrag = (pageX: number, pageY: number) => {
+    dragStartRef.current = {
+      x: pageX - props.pan.x,
+      y: pageY - props.pan.y,
+    };
+    setIsDraggingMap(true);
+  };
+
+  const moveMapDrag = (pageX: number, pageY: number) => {
+    if (!isDraggingMap) return;
+
+    props.onPan({
+      x: pageX - dragStartRef.current.x,
+      y: pageY - dragStartRef.current.y,
+    });
+  };
+
+  const endMapDrag = () => {
+    setIsDraggingMap(false);
+  };
+
+  if (props.mapMode === "satellite") {
+    return (
+      <MapModeScreen
+        type="satellite"
+        title="위성지도 모드"
+        description="위성 화면으로 지도를 확인하고 있습니다."
+        onBack={props.onCloseModeScreen}
+      />
+    );
+  }
+
+  if (props.mapMode === "roadview") {
+    return (
+      <MapModeScreen
+        type="roadview"
+        title="거리뷰 모드"
+        description="주변 도로와 이동 경로를 거리뷰로 확인하고 있습니다."
+        onBack={props.onCloseModeScreen}
+      />
     );
   }
 
   return (
-    <View style={styles.map}>
-      {!isReady && !errorText && (
-        <ActivityIndicator
-          size="large"
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            marginLeft: -18,
-            marginTop: -18,
-            zIndex: 2,
-          }}
-        />
-      )}
-
-      {!!errorText && (
-        <View
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 16,
-            right: 16,
-            zIndex: 3,
-            backgroundColor: "white",
-            padding: 12,
-            borderRadius: 12,
-          }}
-        >
-          <Text>{errorText}</Text>
-        </View>
-      )}
-
-      <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
-    </View>
-  );
-}
-
-function Marker({
-  color,
-  label,
-  danger,
-  style,
-}: {
-  color: string;
-  label: string;
-  danger?: boolean;
-  style?: any;
-}) {
-  return (
-    <View style={[styles.markerWrap, style]}>
-      {danger && (
-        <View style={styles.dangerBubble}>
-          <Ionicons name="alert" size={12} color="#fff" />
-        </View>
-      )}
-
-      <View style={[styles.avatar, { borderColor: color }]}>
-        <View style={[styles.avatarInner, { backgroundColor: color }]} />
-      </View>
-
-      <View style={[styles.namePill, { backgroundColor: color }]}>
-        <Text style={styles.nameText}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
-function PhoneVisualSlot({
-  max,
-  baseText,
-  digits,
-  editable,
-  digitW,
-  digitH,
-  showCursor,
-  cursorIndex,
-  onPress,
-}: {
-  max: number;
-  baseText: string;
-  digits: string;
-  editable: boolean;
-  digitW: number;
-  digitH: number;
-  showCursor: boolean;
-  cursorIndex: number;
-  onPress: () => void;
-}) {
-  const len = Math.min(digits.length, max);
-  const shownBase = baseText.slice(0, max);
-  const slotWidth = digitW * max;
-  const safeCursorIndex = Math.max(0, Math.min(cursorIndex, max));
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[styles.slotWrap, { width: slotWidth, height: digitH }]}
+    <View
+      style={styles.mockMap}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setMapSize({ width, height });
+      }}
     >
-      <View style={styles.slotRow} pointerEvents="none">
-        {shownBase.split("").map((ch, i) => (
-          <Text
-            key={`b-${i}`}
-            style={[
-              styles.slotBaseChar,
-              { width: digitW },
-              i < len && styles.charTransparent,
-            ]}
-          >
-            {ch}
-          </Text>
-        ))}
-      </View>
+      {/* 지도 그룹: 배경 지도 + 지오펜스 + 대상자/보호자 + 경로선이 실제 지도처럼 함께 이동 */}
+      <View
+        style={[
+          styles.draggableMapGroup,
+          {
+            transform: [
+              { translateX: props.pan.x },
+              { translateY: props.pan.y },
+              { scale: props.zoom },
+            ],
+          },
+        ]}
+        onStartShouldSetResponder={() => false}
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={(event) => {
+          startMapDrag(event.nativeEvent.pageX, event.nativeEvent.pageY);
+        }}
+        onResponderMove={(event) => {
+          moveMapDrag(event.nativeEvent.pageX, event.nativeEvent.pageY);
+        }}
+        onResponderRelease={endMapDrag}
+        onResponderTerminate={endMapDrag}
+        onResponderTerminationRequest={() => false}
+      >
+        <View style={styles.mockMapCanvas}>
+          <View style={[styles.mockRoad, styles.roadVerticalLeft]} />
+          <View style={[styles.mockRoad, styles.roadVerticalCenter]} />
+          <View style={[styles.mockRoad, styles.roadVerticalRight]} />
+          <View style={[styles.mockRoad, styles.roadHorizontalTop]} />
+          <View style={[styles.mockRoad, styles.roadHorizontalMiddle]} />
+          <View style={[styles.mockRoad, styles.roadHorizontalBottom]} />
+          <View style={styles.mockDiagonalRoad} />
 
-      <View style={[styles.slotRow, styles.slotOverlay]} pointerEvents="none">
-        {digits
-          .padEnd(max, " ")
-          .slice(0, max)
-          .split("")
-          .map((ch, i) => (
-            <Text
-              key={`t-${i}`}
-              style={[styles.slotTopChar, { width: digitW }]}
-            >
-              {ch}
-            </Text>
-          ))}
-      </View>
+          <View style={styles.placeSchool}>
+            <Text style={styles.placeEmoji}>🏫</Text>
+            <Text style={styles.placeText}>강남초등학교</Text>
+          </View>
 
-      {editable && showCursor && (
-        <View
-          pointerEvents="none"
+          <View style={styles.placePolice}>
+            <Text style={styles.placeEmoji}>🚔</Text>
+            <Text style={styles.placeText}>강남경찰서</Text>
+          </View>
+
+          <View style={styles.placeLibrary}>
+            <Text style={styles.placeEmoji}>📚</Text>
+            <Text style={styles.placeText}>시립도서관</Text>
+          </View>
+
+          <View style={styles.placeMart}>
+            <Text style={styles.placeEmoji}>🏪</Text>
+            <Text style={styles.placeText}>이마트</Text>
+          </View>
+
+          <View style={styles.placeFood}>
+            <Text style={styles.placeEmoji}>🍽️</Text>
+            <Text style={styles.placeText}>맛있는집</Text>
+          </View>
+        </View>
+
+        <View style={styles.safeZone} />
+
+        {props.showRouteInfo && (
+          <MockRouteLine
+            mapWidth={mapSize.width}
+            mapHeight={mapSize.height}
+            dangerTarget={props.dangerTarget}
+          />
+        )}
+
+        <View style={styles.targetGreenWrap}>
+          <View style={styles.personMarkerRingGreen}>
+            <View style={styles.personCircleGreen}>
+              <Text style={styles.personEmoji}>👶</Text>
+            </View>
+          </View>
+          <Text style={styles.greenName}>이서윤</Text>
+        </View>
+
+        <Pressable
           style={[
-            styles.slotCursor,
-            {
-              left: safeCursorIndex * digitW - 1,
-              height: Math.max(16, digitH - 2),
-            },
+            styles.targetOrangeWrap,
+            { left: props.dangerTarget.x, top: props.dangerTarget.y },
           ]}
-        />
-      )}
-    </Pressable>
+          onPress={() => setDangerPopupOpen(true)}
+          hitSlop={10}
+        >
+          <View style={styles.markerAlertBadgeSmall}>
+            <Text style={styles.markerAlertText}>!</Text>
+          </View>
+          <View style={styles.personMarkerRingOrange}>
+            <View style={styles.personCircleOrange}>
+              <Text style={styles.personEmoji}>👶</Text>
+            </View>
+          </View>
+          <Text style={styles.orangeName}>{props.dangerTarget.name}</Text>
+        </Pressable>
+
+        <View style={styles.guardianWrap}>
+          <View style={styles.guardianMarkerRing}>
+            <View style={styles.guardianCircle}>
+              <Ionicons name="person-outline" size={17} color="#fff" />
+            </View>
+          </View>
+          <Text style={styles.guardianName}>보호자</Text>
+        </View>
+      </View>
+
+      {/* 고정 UI: 버튼, 상단 알림, 최근 알림 팝업, 모달 */}
+      <DangerAlertPopup
+        visible={dangerPopupOpen}
+        alerts={recentDangerAlerts}
+        onClose={() => setDangerPopupOpen(false)}
+      />
+
+      <MapOverlayControls {...props} />
+    </View>
   );
 }
 
-function ErrorDot({
+function RouteSegment({
+  from,
+  to,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+}) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+  const center = {
+    x: (from.x + to.x) / 2,
+    y: (from.y + to.y) / 2,
+  };
+
+  return (
+    <View
+      style={[
+        styles.routePathSegment,
+        {
+          left: center.x - length / 2,
+          top: center.y - 2,
+          width: length,
+          transform: [{ rotate: `${angle}deg` }],
+        },
+      ]}
+    />
+  );
+}
+
+function MockRouteLine({
+  mapWidth,
+  mapHeight,
+  dangerTarget,
+}: {
+  mapWidth: number;
+  mapHeight: number;
+  dangerTarget: DangerTarget;
+}) {
+  if (!mapWidth || !mapHeight) return null;
+
+  /**
+   * 목업 화면에서 실제로 보이는 마커 중심 좌표 기준
+   *
+   * 출발지: 보호자 프로필 원형 마커 중심
+   * - guardianWrap: left 50%, marginLeft -23
+   * - guardianMarkerRing: 40 x 40
+   * - guardianName 포함 전체 높이를 고려해 원형 마커 중심을 계산
+   *
+   * 도착지: 현재 위험 상황 발생 대상자 원형 마커 중심
+   * - dangerTarget 객체의 x, y, markerSize 기준
+   * - 위험 대상자가 바뀌면 도착지도 자동으로 해당 대상자 중심으로 변경
+   */
+  const guardianCenter = {
+    x: mapWidth / 2 - 3,
+    y: mapHeight - 105,
+  };
+
+  const dangerCenter = {
+    x: dangerTarget.x + dangerTarget.markerSize / 2,
+    y: dangerTarget.y + dangerTarget.markerSize / 2,
+  };
+
+  // 경로 정보 박스는 보호자와 위험 대상자 사이의 선 중앙에 표시합니다.
+  // 보호자 마커를 가리지 않도록 정확한 중앙에서 살짝 위쪽이 아닌, 선 중앙보다 약간 오른쪽/아래로만 보정합니다.
+  const infoBoxWidth = 108;
+  const infoBoxHeight = 26;
+
+  const routeCenter = {
+    x: (guardianCenter.x + dangerCenter.x) / 2,
+    y: (guardianCenter.y + dangerCenter.y) / 2,
+  };
+
+  const infoBoxCenter = {
+    x: routeCenter.x + 18,
+    y: routeCenter.y + 12,
+  };
+
+  const infoBoxLeft = Math.max(
+    12,
+    Math.min(mapWidth - infoBoxWidth - 12, infoBoxCenter.x - infoBoxWidth / 2),
+  );
+  const infoBoxTop = Math.max(
+    72,
+    Math.min(mapHeight - 128, infoBoxCenter.y - infoBoxHeight / 2),
+  );
+
+  return (
+    <View pointerEvents="none" style={styles.routeLayer}>
+      <RouteSegment from={guardianCenter} to={dangerCenter} />
+
+      <View
+        style={[
+          styles.routeMiniBox,
+          {
+            left: infoBoxLeft,
+            top: infoBoxTop,
+            width: infoBoxWidth,
+          },
+        ]}
+      >
+        <Text style={styles.routeMiniText}>도보 8분 · 520m</Text>
+      </View>
+    </View>
+  );
+}
+
+function DangerAlertPopup({
   visible,
-  onPress,
+  alerts,
+  onClose,
 }: {
   visible: boolean;
-  onPress: () => void;
+  alerts: DangerAlert[];
+  onClose: () => void;
 }) {
   if (!visible) return null;
 
   return (
-    <Pressable onPress={onPress} style={styles.errorDot} hitSlop={8}>
-      <Text style={styles.errorDotText}>!</Text>
-    </Pressable>
+    <View style={styles.dangerPopupBox}>
+      <View style={styles.dangerPopupHeader}>
+        <Text style={styles.dangerPopupTitle}>최근 알림</Text>
+        <Pressable style={styles.dangerPopupCloseBtn} onPress={onClose}>
+          <Ionicons name="close" size={19} color="#334155" />
+        </Pressable>
+      </View>
+
+      <View style={styles.dangerAlertList}>
+        {alerts.map((alert) => {
+          const isSos = alert.type === "sos";
+          const isGeofence = alert.type === "geofence";
+
+          return (
+            <View
+              key={alert.id}
+              style={[
+                styles.dangerAlertItem,
+                isSos && styles.dangerAlertItemSos,
+                isGeofence && styles.dangerAlertItemGeofence,
+                alert.type === "heart" && styles.dangerAlertItemHeart,
+              ]}
+            >
+              <View
+                style={[
+                  styles.dangerAlertIcon,
+                  isSos && styles.dangerAlertIconSos,
+                  isGeofence && styles.dangerAlertIconGeofence,
+                  alert.type === "heart" && styles.dangerAlertIconHeart,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    isSos
+                      ? "alert-circle-outline"
+                      : isGeofence
+                        ? "location-outline"
+                        : "alert-circle-outline"
+                  }
+                  size={17}
+                  color={isSos ? "#FF2F45" : isGeofence ? "#F97316" : "#D97706"}
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.dangerAlertTitle,
+                    isSos && styles.dangerAlertTitleSos,
+                    isGeofence && styles.dangerAlertTitleGeofence,
+                    alert.type === "heart" && styles.dangerAlertTitleHeart,
+                  ]}
+                >
+                  {alert.title}
+                </Text>
+                <Text style={styles.dangerAlertTime}>{alert.timeText}</Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
-function ErrorTooltip({
-  visible,
-  message,
+function MapModeScreen({
+  type,
+  title,
+  description,
+  onBack,
 }: {
-  visible: boolean;
-  message?: string;
+  type: "satellite" | "roadview";
+  title: string;
+  description: string;
+  onBack: () => void;
 }) {
-  if (!visible || !message) return null;
+  return (
+    <View
+      style={[
+        styles.modeScreen,
+        type === "satellite" ? styles.satelliteScreen : styles.roadViewScreen,
+      ]}
+    >
+      <Pressable style={styles.modeBackBtn} onPress={onBack}>
+        <Ionicons name="chevron-back" size={20} color="#111827" />
+        <Text style={styles.modeBackText}>돌아가기</Text>
+      </Pressable>
+
+      {type === "satellite" ? (
+        <View style={styles.satelliteGrid}>
+          <View style={styles.satelliteBlockLarge} />
+          <View style={styles.satelliteBlockSmall} />
+          <View style={styles.satelliteRoad} />
+          <View style={styles.satelliteRoadSecond} />
+        </View>
+      ) : (
+        <View style={styles.roadViewMock}>
+          <View style={styles.roadViewSky} />
+          <View style={styles.roadViewGround} />
+          <View style={styles.roadViewLaneLeft} />
+          <View style={styles.roadViewLaneRight} />
+          <View style={styles.roadViewCenterLine} />
+        </View>
+      )}
+
+      <View style={styles.modeCenterCard}>
+        <Text style={styles.modeTitle}>{title}</Text>
+        <Text style={styles.modeDescription}>{description}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MapOverlayControls({
+  showRouteInfo,
+  mapMode,
+  dangerNoticeVisible,
+  sosName,
+  dangerTargetName,
+  isUserRole,
+  onToggleRoute,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+  onOpenSatelliteMode,
+  onOpenRoadViewMode,
+  onMoveToGuardian,
+  onOpenTargetModal,
+  onPressSOS,
+  onCloseNotice,
+}: MapOverlayProps) {
+  if (mapMode !== "default") return null;
 
   return (
-    <View style={styles.tooltipBox} pointerEvents="none">
-      <Text style={styles.tooltipText}>{message}</Text>
-      <View style={styles.tooltipArrow} />
+    <>
+      {dangerNoticeVisible && (
+        <View style={styles.sosNoticeBox}>
+          <View style={styles.sosNoticeLeft}>
+            <View style={styles.noticeAlertIcon}>
+              <Text style={styles.noticeAlertText}>!</Text>
+            </View>
+            <Text style={styles.sosNoticeText}>
+              {sosName} 님이 SOS 요청을 했습니다
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={onCloseNotice}
+            hitSlop={10}
+            style={styles.sosNoticeCloseBtn}
+          >
+            <Ionicons name="close" size={17} color="#475569" />
+          </Pressable>
+        </View>
+      )}
+
+      <Pressable
+        style={[styles.routeBtn, showRouteInfo && styles.routeBtnActive]}
+        onPress={onToggleRoute}
+      >
+        <Ionicons
+          name="navigate-outline"
+          size={20}
+          color={showRouteInfo ? COLORS.primary : "#334155"}
+        />
+      </Pressable>
+
+      <View style={styles.zoomBox}>
+        <Pressable style={styles.zoomBtn} onPress={onZoomIn}>
+          <Ionicons name="add" size={20} color="#334155" />
+        </Pressable>
+
+        <View style={styles.zoomDivider} />
+
+        <Pressable style={styles.zoomBtn} onPress={onZoomOut}>
+          <Ionicons name="remove" size={20} color="#334155" />
+        </Pressable>
+
+        <View style={styles.zoomDivider} />
+
+        <Pressable style={styles.zoomBtn} onPress={onFit}>
+          <Ionicons name="scan-outline" size={19} color="#334155" />
+        </Pressable>
+      </View>
+
+      <View style={styles.rightControlBox}>
+        <Pressable style={styles.rightBtn} onPress={onOpenSatelliteMode}>
+          <Ionicons name="map-outline" size={21} color="#334155" />
+        </Pressable>
+
+        <Pressable style={styles.rightBtn} onPress={onOpenRoadViewMode}>
+          <Ionicons name="walk-outline" size={21} color="#334155" />
+        </Pressable>
+
+        <Pressable style={styles.rightBtn} onPress={onFit}>
+          <Ionicons name="location-outline" size={21} color={COLORS.primary} />
+        </Pressable>
+
+        <Pressable
+          style={[styles.rightBtn, styles.rightBtnPrimary]}
+          onPress={onOpenTargetModal}
+        >
+          <Ionicons name="person-add-outline" size={21} color="#fff" />
+        </Pressable>
+      </View>
+
+      {isUserRole && (
+        <Pressable style={styles.sosBtn} onPress={onPressSOS}>
+          <Ionicons name="alert-circle-outline" size={17} color="#fff" />
+          <Text style={styles.sosBtnText}>SOS 긴급호출</Text>
+        </Pressable>
+      )}
+    </>
+  );
+}
+
+function TargetRegisterModal({
+  visible,
+  onClose,
+  onRegister,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onRegister: (target: Target) => void;
+}) {
+  const [name, setName] = useState("");
+  const [age, setAge] = useState("");
+  const [phone, setPhone] = useState("");
+  const [relation, setRelation] = useState("");
+  const [address, setAddress] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+
+    setName("");
+    setAge("");
+    setPhone("");
+    setRelation("");
+    setAddress("");
+  }, [visible]);
+
+  const register = () => {
+    if (!name.trim()) {
+      Alert.alert("입력 확인", "대상자 이름을 입력해주세요.");
+      return;
+    }
+
+    onRegister({
+      id: `target_${Date.now()}`,
+      name: name.trim(),
+      sub: `${age.trim() || "-"}세 · ${relation.trim() || "대상자"}`,
+    });
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <Pressable style={styles.targetModalDim} onPress={onClose} />
+
+      <KeyboardAvoidingView
+        style={styles.targetModalKeyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.targetSheet}>
+          <View style={styles.targetModalTop}>
+            <Text style={styles.targetModalTitle}>대상자 등록</Text>
+
+            <Pressable style={styles.targetCloseBtn} onPress={onClose}>
+              <Ionicons name="close" size={28} color="#fff" />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.targetForm}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <TargetInput
+              icon="person-outline"
+              label="이름"
+              value={name}
+              onChangeText={setName}
+              placeholder="대상자 이름을 입력하세요"
+            />
+
+            <TargetInput
+              icon="calendar-outline"
+              label="나이"
+              value={age}
+              onChangeText={setAge}
+              placeholder="나이를 입력하세요"
+              keyboardType="number-pad"
+            />
+
+            <TargetInput
+              icon="call-outline"
+              label="연락처"
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="010-0000-0000"
+              keyboardType="phone-pad"
+            />
+
+            <View style={styles.targetInputBlock}>
+              <Text style={styles.targetLabel}>관계</Text>
+              <View style={styles.selectBox}>
+                <TextInput
+                  value={relation}
+                  onChangeText={setRelation}
+                  placeholder="선택하세요"
+                  placeholderTextColor="#9CA3AF"
+                  style={styles.selectInput}
+                />
+                <Ionicons name="chevron-down" size={22} color="#64748B" />
+              </View>
+            </View>
+
+            <View style={styles.targetInputBlock}>
+              <View style={styles.targetLabelRow}>
+                <Ionicons
+                  name="location-outline"
+                  size={21}
+                  color={COLORS.primary}
+                />
+                <Text style={styles.targetLabel}>주소 (안전구역)</Text>
+              </View>
+
+              <View style={styles.addressBox}>
+                <TextInput
+                  value={address}
+                  onChangeText={setAddress}
+                  placeholder="주소를 입력하거나 검색하세요"
+                  placeholderTextColor="#9CA3AF"
+                  style={styles.addressInput}
+                />
+                <Pressable style={styles.searchBtn}>
+                  <Ionicons name="search-outline" size={24} color="#fff" />
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.targetGuideBox}>
+              <Text style={styles.targetGuideText}>
+                💡 안내: 등록된 주소를 중심으로 안전구역이 자동 설정됩니다. 설정
+                페이지에서 반경을 조정할 수 있습니다.
+              </Text>
+            </View>
+
+            <View style={styles.targetBottomBtns}>
+              <Pressable style={styles.cancelBtn} onPress={onClose}>
+                <Text style={styles.cancelBtnText}>취소</Text>
+              </Pressable>
+
+              <Pressable style={styles.registerBtn} onPress={register}>
+                <Text style={styles.registerBtnText}>등록하기</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function TargetInput({
+  icon,
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  keyboardType?: "default" | "number-pad" | "phone-pad";
+}) {
+  return (
+    <View style={styles.targetInputBlock}>
+      <View style={styles.targetLabelRow}>
+        <Ionicons name={icon} size={21} color={COLORS.primary} />
+        <Text style={styles.targetLabel}>{label}</Text>
+      </View>
+
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#9CA3AF"
+        keyboardType={keyboardType ?? "default"}
+        style={styles.targetInput}
+      />
     </View>
   );
 }
@@ -1190,9 +1501,6 @@ function ProfileModal({
   profile,
   onSaveProfile,
   onSaveTargets,
-  onAddChild,
-  onDeleteChild,
-  canManageChildren,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -1202,119 +1510,70 @@ function ProfileModal({
   profile: Profile;
   onSaveProfile: (p: Profile) => Promise<void> | void;
   onSaveTargets: (targets: Target[]) => Promise<void> | void;
-  onAddChild: (child: ChildDraft) => Promise<Target>;
-  onDeleteChild: (target: Target) => Promise<void>;
-  canManageChildren: boolean;
 }) {
   const [draft, setDraft] = useState<Profile>(profile);
   const [draftTargets, setDraftTargets] = useState<Target[]>(linkedTargets);
   const [errors, setErrors] = useState<FieldErrors>({});
-  const [tooltipField, setTooltipField] = useState<TooltipField>(null);
-  const [childModalOpen, setChildModalOpen] = useState(false);
-  const [childDraft, setChildDraft] = useState<ChildDraft>({
-    name: "",
-    age: "",
-    loginId: "",
-    password: "",
-  });
-  const [childError, setChildError] = useState("");
-  const [addingChild, setAddingChild] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Target | null>(null);
-  const [deleteError, setDeleteError] = useState("");
-  const [deletingChild, setDeletingChild] = useState(false);
-
-  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [editingName, setEditingName] = useState(false);
-  const [editingKey, setEditingKey] = useState<
-    null | "userId" | "email" | "phone"
-  >(null);
-
-  const userIdRef = useRef<TextInput>(null);
-  const emailRef = useRef<TextInput>(null);
-
-  const [userIdSelection, setUserIdSelection] = useState({
-    start: profile.userId.length,
-    end: profile.userId.length,
-  });
-  const [emailSelection, setEmailSelection] = useState({
-    start: profile.email.length,
-    end: profile.email.length,
-  });
-
-  const [digitW, setDigitW] = useState<number>(14);
-  const [digitH, setDigitH] = useState<number>(20);
-
-  const A_BASE = "010";
-  const B_BASE = "0000";
-
   const phoneInputRef = useRef<TextInput>(null);
-  const [phoneDigits, setPhoneDigits] = useState<string>("");
+  const scrollRef = useRef<ScrollView>(null);
 
-  const clearTooltipTimer = () => {
-    if (tooltipTimerRef.current) {
-      clearTimeout(tooltipTimerRef.current);
-      tooltipTimerRef.current = null;
-    }
+  const [phoneDigits, setPhoneDigits] = useState("");
+
+  const ID_REGEX = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const onlyDigits = (value: string) =>
+    value.replace(/[^0-9]/g, "").slice(0, 11);
+
+  const formatPhone = (digits: string) => {
+    const d = onlyDigits(digits);
+    return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7, 11)}`;
   };
 
-  const showTooltip = (field: Exclude<TooltipField, null>) => {
-    clearTooltipTimer();
-    setTooltipField(field);
-    tooltipTimerRef.current = setTimeout(() => {
-      setTooltipField(null);
-      tooltipTimerRef.current = null;
-    }, 3000);
+  const phoneA = phoneDigits.slice(0, 3);
+  const phoneB = phoneDigits.slice(3, 7);
+  const phoneC = phoneDigits.slice(7, 11);
+
+  const scrollToY = (y: number) => {
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y, animated: true });
+    }, 120);
   };
 
-  const hideKeyboardAndTooltip = () => {
+  useEffect(() => {
+    if (!visible) return;
+
+    setDraft(profile);
+    setDraftTargets(linkedTargets);
+    setPhoneDigits(onlyDigits(profile.phone));
+    setErrors({});
     Keyboard.dismiss();
-    setEditingName(false);
-    setEditingKey(null);
-    clearTooltipTimer();
-    setTooltipField(null);
-  };
+  }, [visible, profile, linkedTargets]);
 
-  const onlyDigits = (t: string, max: number) =>
-    t.replace(/[^0-9]/g, "").slice(0, max);
+  const validateName = (value: string) => {
+    const trimmed = value.trim();
 
-  const splitPhone = (formatted: string) => {
-    const d = (formatted ?? "").replace(/[^0-9]/g, "").slice(0, 11);
-    return { a: d.slice(0, 3), b: d.slice(3, 7), c: d.slice(7, 11) };
+    if (!trimmed) return "이름을 입력해주세요";
+    if (trimmed.length < 2) return "이름은 2자 이상 입력해주세요";
+
+    return "";
   };
 
   const validateUserId = (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed) return "아이디를 입력해 주세요.";
-    if (trimmed.length < 4 || trimmed.length > 20) {
-      return "아이디는 4~20자 이내로 입력 가능합니다";
-    }
+
+    if (!trimmed) return "아이디를 입력해주세요";
+    if (trimmed.length < 3) return "아이디는 3자 이상 입력해주세요";
+    if (!ID_REGEX.test(trimmed))
+      return "아이디는 영문/숫자/기호로만 가능합니다";
+
     return "";
   };
 
   const validateEmail = (value: string) => {
-    const trimmed = value.trim().toLowerCase();
-    if (!trimmed) return "이메일을 입력해 주세요.";
+    const trimmed = value.trim();
 
-    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-    if (!emailRegex.test(trimmed)) {
-      return "이메일 형식이 올바르지 않습니다";
-    }
-
-    const allowedDomains = [
-      "gmail.com",
-      "naver.com",
-      "daum.net",
-      "kakao.com",
-      "hotmail.com",
-      "outlook.com",
-      "icloud.com",
-      "hanmail.net",
-      "nate.com",
-    ];
-
-    const domain = trimmed.split("@")[1];
-    if (!allowedDomains.includes(domain)) {
+    if (trimmed && !EMAIL_REGEX.test(trimmed)) {
       return "이메일 형식이 올바르지 않습니다";
     }
 
@@ -1322,207 +1581,85 @@ function ProfileModal({
   };
 
   const validatePhone = (digits: string) => {
-    if (!digits) return "전화번호를 입력해 주세요.";
-    if (!/^010\d{8}$/.test(digits)) {
-      return "전화번호는 11자리만 입력 가능합니다";
-    }
+    if (!digits) return "전화번호를 입력해주세요";
+    if (digits.length !== 11) return "전화번호는 11자리만 가능합니다";
+
     return "";
   };
 
-  const validateAll = () => {
+  const handleClose = () => {
+    Keyboard.dismiss();
+
+    setDraft(profile);
+    setDraftTargets(linkedTargets);
+    setPhoneDigits(onlyDigits(profile.phone));
+    setErrors({});
+
+    onClose();
+  };
+
+  const onSave = async () => {
     const nextErrors: FieldErrors = {
+      name: validateName(draft.name),
       userId: validateUserId(draft.userId),
       email: validateEmail(draft.email),
       phone: validatePhone(phoneDigits),
     };
 
     setErrors(nextErrors);
-    clearTooltipTimer();
-    setTooltipField(null);
 
-    return !nextErrors.userId && !nextErrors.email && !nextErrors.phone;
-  };
+    if (
+      nextErrors.name ||
+      nextErrors.userId ||
+      nextErrors.email ||
+      nextErrors.phone
+    ) {
+      return;
+    }
 
-  const aDigits = phoneDigits.slice(0, 3);
-  const bDigits = phoneDigits.slice(3, 7);
-  const cDigits = phoneDigits.slice(7, 11);
-
-  const aView = (aDigits + A_BASE.slice(aDigits.length)).slice(0, 3);
-  const bView = (bDigits + B_BASE.slice(bDigits.length)).slice(0, 4);
-  const cView = (cDigits + B_BASE.slice(cDigits.length)).slice(0, 4);
-
-  const activePhoneSection =
-    phoneDigits.length < 3 ? "A" : phoneDigits.length < 7 ? "B" : "C";
-
-  const cursorIndexA = Math.min(phoneDigits.length, 3);
-  const cursorIndexB =
-    phoneDigits.length <= 3 ? 0 : Math.min(phoneDigits.length - 3, 4);
-  const cursorIndexC =
-    phoneDigits.length <= 7 ? 0 : Math.min(phoneDigits.length - 7, 4);
-
-  useEffect(() => {
-    if (!visible) return;
-
-    setDraft(profile);
-    setDraftTargets(linkedTargets);
-    setErrors({});
-    clearTooltipTimer();
-    setTooltipField(null);
-    setEditingName(false);
-    setEditingKey(null);
-    setChildModalOpen(false);
-    setChildDraft({ name: "", age: "", loginId: "", password: "" });
-    setChildError("");
-    Keyboard.dismiss();
-
-    setUserIdSelection({
-      start: (profile.userId ?? "").length,
-      end: (profile.userId ?? "").length,
-    });
-    setEmailSelection({
-      start: (profile.email ?? "").length,
-      end: (profile.email ?? "").length,
-    });
-
-    const { a, b, c } = splitPhone(profile.phone || DEFAULT_PROFILE.phone);
-    setPhoneDigits(`${onlyDigits(a, 3)}${onlyDigits(b, 4)}${onlyDigits(c, 4)}`);
-  }, [visible, profile, linkedTargets]);
-
-  useEffect(() => {
-    return () => {
-      clearTooltipTimer();
+    const nextProfile: Profile = {
+      ...draft,
+      name: draft.name.trim(),
+      userId: draft.userId.trim(),
+      email: draft.email.trim(),
+      phone: formatPhone(phoneDigits),
+      imageUri: draft.imageUri ?? null,
+      role: draft.role ?? profile.role ?? "guardian",
+      roleLabel:
+        draft.roleLabel ??
+        profile.roleLabel ??
+        (draft.role === "user" ? "사용자" : "보호자"),
     };
-  }, []);
 
-  useEffect(() => {
-    if (!childModalOpen) return;
-
-    setChildDraft({ name: "", age: "", loginId: "", password: "" });
-    setChildError("");
-    setAddingChild(false);
-  }, [childModalOpen]);
-
-  const endEditing = () => {
     Keyboard.dismiss();
-    setEditingName(false);
-    setEditingKey(null);
+
+    await onSaveProfile(nextProfile);
+    await onSaveTargets(draftTargets);
+
+    onPressSave();
   };
 
-  const handleClose = () => {
-    hideKeyboardAndTooltip();
-    onClose();
+  const onLogout = () => {
+    Keyboard.dismiss();
+    onPressLogout();
   };
 
-  const ensureMediaPermission = async (): Promise<boolean> => {
-    const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
-
-    if (cur.granted) {
-      // @ts-ignore
-      const access = cur.accessPrivileges as
-        | undefined
-        | "all"
-        | "limited"
-        | "none";
-
-      if (Platform.OS === "ios" && access === "limited") {
-        return await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            "사진 접근 권한",
-            "현재 사진 접근이 제한되어 있습니다\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
-            [
-              { text: "취소", style: "cancel", onPress: () => resolve(false) },
-              {
-                text: "설정으로 이동",
-                onPress: () => {
-                  Linking.openSettings();
-                  resolve(false);
-                },
-              },
-            ],
-          );
-        });
-      }
-
-      return true;
-    }
-
-    if (cur.status === ImagePicker.PermissionStatus.UNDETERMINED) {
-      const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (req.granted) {
-        // @ts-ignore
-        const access = req.accessPrivileges as
-          | undefined
-          | "all"
-          | "limited"
-          | "none";
-
-        if (Platform.OS === "ios" && access === "limited") {
-          return await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              "사진 접근 권한",
-              "현재 사진 접근이 제한되어 있습니다\n설정에서 '모든 사진 허용'으로 변경하시겠습니까?",
-              [
-                {
-                  text: "취소",
-                  style: "cancel",
-                  onPress: () => resolve(false),
-                },
-                {
-                  text: "설정으로 이동",
-                  onPress: () => {
-                    Linking.openSettings();
-                    resolve(false);
-                  },
-                },
-              ],
-            );
-          });
-        }
-
-        return true;
-      }
-
-      return await new Promise<boolean>((resolve) => {
-        Alert.alert(
-          "사진 접근 권한",
-          "사진을 등록하려면 사진 접근 권한이 필요합니다.\n설정에서 권한을 허용하시겠습니까?",
-          [
-            { text: "취소", style: "cancel", onPress: () => resolve(false) },
-            {
-              text: "설정으로 이동",
-              onPress: () => {
-                Linking.openSettings();
-                resolve(false);
-              },
-            },
-          ],
-        );
-      });
-    }
-
-    return await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        "사진 접근 권한",
-        "사진을 등록하려면 사진 접근 권한이 필요합니다.\n설정에서 권한을 허용하시겠습니까?",
-        [
-          { text: "취소", style: "cancel", onPress: () => resolve(false) },
-          {
-            text: "설정으로 이동",
-            onPress: () => {
-              Linking.openSettings();
-              resolve(false);
-            },
-          },
-        ],
-      );
-    });
+  const removeTarget = (targetId: string) => {
+    setDraftTargets((prev) => prev.filter((item) => item.id !== targetId));
   };
 
   const pickImage = async () => {
-    endEditing();
-    const ok = await ensureMediaPermission();
-    if (!ok) return;
+    Keyboard.dismiss();
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "사진 접근 권한",
+        "사진을 등록하려면 사진 접근 권한이 필요합니다.",
+      );
+      return;
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -1533,219 +1670,17 @@ function ProfileModal({
 
     if (!result.canceled) {
       const uri = result.assets?.[0]?.uri;
-      if (uri) setDraft((p) => ({ ...p, imageUri: uri }));
-    }
-  };
 
-  const resetToDefault = () => {
-    endEditing();
-    Alert.alert("기본 이미지 적용", "기본 이미지로 되돌릴까요?", [
-      { text: "취소", style: "cancel" },
-      {
-        text: "되돌리기",
-        style: "destructive",
-        onPress: () => setDraft((p) => ({ ...p, imageUri: null })),
-      },
-    ]);
-  };
-
-  const openPhotoMenu = () => {
-    endEditing();
-
-    const options = ["사진 등록", "기본 이미지 적용", "취소"];
-    const cancelButtonIndex = 2;
-    const destructiveButtonIndex = 1;
-
-    const onSelect = (i: number) => {
-      if (i === 0) pickImage();
-      if (i === 1) resetToDefault();
-    };
-
-    if (Platform.OS === "ios") {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex, destructiveButtonIndex },
-        onSelect,
-      );
-    } else {
-      Alert.alert("프로필 사진", "원하는 작업을 선택해 주세요.", [
-        { text: "사진 등록", onPress: pickImage },
-        {
-          text: "기본 이미지 적용",
-          style: "destructive",
-          onPress: resetToDefault,
-        },
-        { text: "취소", style: "cancel" },
-      ]);
-    }
-  };
-
-  const enterEdit = (field: "userId" | "email" | "phone") => {
-    setEditingName(false);
-    clearTooltipTimer();
-    setTooltipField(null);
-
-    if (editingKey === field) return;
-    setEditingKey(field);
-
-    if (field === "phone") {
-      setTimeout(() => {
-        phoneInputRef.current?.focus();
-      }, 0);
-      return;
-    }
-
-    setTimeout(() => {
-      if (field === "userId") {
-        const len = draft.userId.length;
-        setUserIdSelection({ start: len, end: len });
-        userIdRef.current?.focus();
+      if (uri) {
+        setDraft((prev) => ({
+          ...prev,
+          imageUri: uri,
+        }));
       }
-      if (field === "email") {
-        const len = draft.email.length;
-        setEmailSelection({ start: len, end: len });
-        emailRef.current?.focus();
-      }
-    }, 0);
-  };
-
-  const confirmRemoveDraftTarget = (target: Target) => {
-    hideKeyboardAndTooltip();
-    Alert.alert("대상자 삭제", `${target.name} 대상을 목록에서 삭제할까요?`, [
-      { text: "취소", style: "cancel" },
-      {
-        text: "삭제",
-        style: "destructive",
-        onPress: () => {
-          setDraftTargets((prev) => prev.filter((t) => t.id !== target.id));
-        },
-      },
-    ]);
-  };
-
-  const changeChildDraft = (key: keyof ChildDraft, value: string) => {
-    setChildDraft((prev) => ({ ...prev, [key]: value }));
-    setChildError("");
-  };
-
-  const openDeleteChildModal = (target: Target) => {
-    hideKeyboardAndTooltip();
-    setDeleteError("");
-    setDeleteTarget(target);
-  };
-
-  const closeDeleteChildModal = () => {
-    if (deletingChild) return;
-    setDeleteTarget(null);
-    setDeleteError("");
-  };
-
-  const submitDeleteChild = async () => {
-    if (!deleteTarget) return;
-
-    setDeletingChild(true);
-    setDeleteError("");
-    try {
-      await onDeleteChild(deleteTarget);
-      setDraftTargets((prev) => prev.filter((t) => t.id !== deleteTarget.id));
-      setDeleteTarget(null);
-    } catch (error) {
-      setDeleteError(
-        error instanceof Error
-          ? error.message
-          : "자녀 계정을 삭제하지 못했습니다.",
-      );
-    } finally {
-      setDeletingChild(false);
     }
-  };
-
-  const confirmDeleteChild = (target: Target) => {
-    hideKeyboardAndTooltip();
-    Alert.alert("회원 탈퇴", "회원 탈퇴하시겠습니까?", [
-      { text: "아니오", style: "cancel" },
-      {
-        text: "예",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await onDeleteChild(target);
-            setDraftTargets((prev) => prev.filter((t) => t.id !== target.id));
-          } catch (error) {
-            Alert.alert(
-              "삭제 실패",
-              error instanceof Error
-                ? error.message
-                : "자녀 계정을 삭제하지 못했습니다.",
-            );
-          }
-        },
-      },
-    ]);
-  };
-
-  const submitChild = async () => {
-    const trimmed = {
-      name: childDraft.name.trim(),
-      age: childDraft.age.trim(),
-      loginId: childDraft.loginId.trim(),
-      password: childDraft.password,
-    };
-
-    if (!trimmed.name || !trimmed.age || !trimmed.loginId || !trimmed.password) {
-      setChildError("자녀 이름, 나이, 아이디, 비밀번호를 모두 입력해주세요.");
-      return;
-    }
-
-    const ageNumber = Number(trimmed.age);
-    if (!Number.isInteger(ageNumber) || ageNumber <= 0) {
-      setChildError("나이는 숫자로 입력해주세요.");
-      return;
-    }
-
-    setAddingChild(true);
-    try {
-      const created = await onAddChild(trimmed);
-      setDraftTargets((prev) => [...prev, created]);
-      setChildDraft({ name: "", age: "", loginId: "", password: "" });
-      setChildError("");
-      setChildModalOpen(false);
-    } catch (error) {
-      console.log("자녀 추가 실패", error);
-      setChildError(
-        error instanceof Error
-          ? error.message
-          : "자녀 추가에 실패했습니다. 서버 상태를 확인해주세요.",
-      );
-    } finally {
-      setAddingChild(false);
-    }
-  };
-
-  const onSave = async () => {
-    const isValid = validateAll();
-    if (!isValid) return;
-
-    const phone = `${aView}-${bView}-${cView}`;
-    const nextProfile = {
-      ...draft,
-      userId: draft.userId.trim(),
-      email: draft.email.trim(),
-      phone,
-    };
-
-    endEditing();
-    await onSaveProfile(nextProfile);
-    await onSaveTargets(draftTargets);
-    onPressSave();
-  };
-
-  const onLogout = () => {
-    hideKeyboardAndTooltip();
-    onPressLogout();
   };
 
   return (
-    <>
     <Modal
       visible={visible}
       transparent
@@ -1754,340 +1689,216 @@ function ProfileModal({
     >
       <Pressable style={styles.modalDim} onPress={handleClose} />
 
-      <View
-        style={{ position: "absolute", opacity: 0, left: -9999, top: -9999 }}
+      <KeyboardAvoidingView
+        style={styles.modalKeyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 20 : 0}
       >
-        <Text
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            if (width > 0) setDigitW(width);
-            if (height > 0) setDigitH(height);
-          }}
-          style={{
-            fontSize: 14,
-            fontWeight: "800",
-            fontVariant:
-              Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-            letterSpacing: 0,
-            includeFontPadding: false,
-          }}
-        >
-          0
-        </Text>
-      </View>
+        <View style={styles.modalCenter} pointerEvents="box-none">
+          <View style={styles.modalSheet}>
+            <View style={styles.modalTop}>
+              <Text style={styles.modalTitle}>내 프로필</Text>
 
-      <View style={styles.modalCenter} pointerEvents="box-none">
-        <View style={styles.modalSheet}>
-          <View style={styles.modalTop}>
-            <Text style={styles.modalTitle}>내 프로필</Text>
-            <Pressable
-              onPress={handleClose}
-              style={styles.modalCloseBtn}
-              hitSlop={10}
+              <Pressable
+                onPress={handleClose}
+                style={styles.modalCloseBtn}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={20} color="#fff" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              ref={scrollRef}
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
             >
-              <Ionicons name="close" size={12} color="#fff" />
-            </Pressable>
-          </View>
-
-          <ScrollView
-            style={styles.modalScroll}
-            contentContainerStyle={styles.modalScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <Pressable onPress={hideKeyboardAndTooltip}>
               <View style={styles.profileCenter}>
-                <View style={styles.profileAvatar}>
-                  {draft.imageUri ? (
-                    <Image
-                      source={{ uri: draft.imageUri }}
-                      style={{ width: 86, height: 86, borderRadius: 43 }}
-                    />
-                  ) : (
-                    <Ionicons
-                      name="person"
-                      size={30}
-                      color="rgba(255,255,255,0.95)"
-                    />
-                  )}
+                <View style={styles.profileAvatarWrap}>
+                  <View style={styles.profileAvatar}>
+                    {draft.imageUri ? (
+                      <Image
+                        source={{ uri: draft.imageUri }}
+                        style={styles.profileAvatarImage}
+                      />
+                    ) : (
+                      <Ionicons name="person" size={38} color="#fff" />
+                    )}
+                  </View>
 
                   <Pressable
-                    onPress={openPhotoMenu}
+                    onPress={pickImage}
                     style={styles.cameraBadge}
-                    hitSlop={10}
+                    hitSlop={8}
                   >
                     <Ionicons name="camera" size={14} color={COLORS.primary} />
                   </Pressable>
                 </View>
 
-                <View style={styles.nameSlot}>
-                  {editingName ? (
-                    <TextInput
-                      autoFocus
-                      value={draft.name}
-                      placeholder="이름 입력"
-                      onChangeText={(t) => setDraft((p) => ({ ...p, name: t }))}
-                      onSubmitEditing={endEditing}
-                      style={styles.nameInput}
-                      returnKeyType="done"
-                    />
-                  ) : (
-                    <Pressable
-                      onPress={() => {
-                        Keyboard.dismiss();
-                        clearTooltipTimer();
-                        setTooltipField(null);
-                        setEditingKey(null);
-                        setEditingName(true);
-                      }}
-                      hitSlop={10}
-                      style={styles.namePress}
-                    >
-                      <Text style={styles.profileName}>
-                        {draft.name || "보호자"}
-                      </Text>
-                    </Pressable>
-                  )}
-                </View>
+                <TextInput
+                  value={draft.name}
+                  onFocus={() => scrollToY(0)}
+                  onChangeText={(text) => {
+                    setDraft((prev) => ({ ...prev, name: text }));
+                    setErrors((prev) => ({ ...prev, name: undefined }));
+                  }}
+                  style={styles.profileNameInput}
+                  placeholder="이름 입력"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  textAlign="center"
+                  returnKeyType="done"
+                />
+
+                <Text style={styles.roleText}>
+                  {draft.roleLabel ??
+                    (draft.role === "user" ? "사용자" : "보호자")}
+                </Text>
+
+                {!!errors.name && (
+                  <Text style={styles.nameErrorText}>{errors.name}</Text>
+                )}
               </View>
 
               <View style={styles.infoCard}>
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="key-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.userId}
-                          onPress={() => showTooltip("userId")}
-                        />
-                      </View>
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <Ionicons
+                      name="key-outline"
+                      size={18}
+                      color="rgba(17,24,39,0.55)"
+                    />
+                    <Text style={styles.infoLabel}>ID</Text>
+                  </View>
 
-                      <Text style={styles.infoLabel}>ID</Text>
+                  <TextInput
+                    value={draft.userId}
+                    onFocus={() => scrollToY(20)}
+                    onChangeText={(text) => {
+                      setDraft((prev) => ({ ...prev, userId: text }));
+                      setErrors((prev) => ({ ...prev, userId: undefined }));
+                    }}
+                    style={styles.infoInput}
+                    placeholder="아이디 입력"
+                    placeholderTextColor="rgba(17,24,39,0.28)"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="done"
+                  />
+                </View>
+                {!!errors.userId && (
+                  <Text style={styles.modalErrorText}>{errors.userId}</Text>
+                )}
 
-                      <ErrorTooltip
-                        visible={tooltipField === "userId"}
-                        message={errors.userId}
-                      />
-                    </View>
+                <View style={styles.cardDivider} />
 
-                    <View style={{ minWidth: 160, alignItems: "flex-end" }}>
-                      <TextInput
-                        ref={userIdRef}
-                        value={draft.userId}
-                        editable={editingKey === "userId"}
-                        selection={userIdSelection}
-                        onSelectionChange={(e) =>
-                          setUserIdSelection(e.nativeEvent.selection)
-                        }
-                        onFocus={() => {
-                          const len = draft.userId.length;
-                          setUserIdSelection({ start: len, end: len });
-                        }}
-                        placeholder="아이디 입력"
-                        placeholderTextColor="rgba(17,24,39,0.28)"
-                        onChangeText={(t) => {
-                          setDraft((p) => ({ ...p, userId: t }));
-                          const len = t.length;
-                          setUserIdSelection({ start: len, end: len });
-                          setErrors((prev) => ({ ...prev, userId: undefined }));
-                          if (tooltipField === "userId") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        onSubmitEditing={endEditing}
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <Ionicons
+                      name="mail-outline"
+                      size={18}
+                      color="rgba(17,24,39,0.55)"
+                    />
+                    <Text style={styles.infoLabel}>이메일</Text>
+                  </View>
+
+                  <TextInput
+                    value={draft.email}
+                    onFocus={() => scrollToY(70)}
+                    onChangeText={(text) => {
+                      setDraft((prev) => ({ ...prev, email: text }));
+                      setErrors((prev) => ({ ...prev, email: undefined }));
+                    }}
+                    style={styles.infoInput}
+                    placeholder="이메일 입력"
+                    placeholderTextColor="rgba(17,24,39,0.28)"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="done"
+                  />
+                </View>
+                {!!errors.email && (
+                  <Text style={styles.modalErrorText}>{errors.email}</Text>
+                )}
+
+                <View style={styles.cardDivider} />
+
+                <View style={styles.infoRow}>
+                  <View style={styles.infoLeft}>
+                    <Ionicons
+                      name="call-outline"
+                      size={18}
+                      color="rgba(17,24,39,0.55)"
+                    />
+                    <Text style={styles.infoLabel}>전화번호</Text>
+                  </View>
+
+                  <Pressable
+                    style={styles.profilePhoneBox}
+                    onPress={() => {
+                      scrollToY(120);
+                      phoneInputRef.current?.focus();
+                    }}
+                  >
+                    <View style={styles.profilePhoneDisplayRow}>
+                      <Text
                         style={[
-                          styles.infoInput,
-                          editingKey !== "userId" && styles.infoInputReadOnly,
+                          styles.phoneCellText,
+                          styles.phoneCellA,
+                          !phoneA && styles.phonePlaceholder,
                         ]}
-                        returnKeyType="done"
-                      />
+                      >
+                        {phoneA || "000"}
+                      </Text>
 
-                      {editingKey !== "userId" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("userId")}
-                        />
-                      )}
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.cardDivider} />
+                      <Text style={styles.profilePhoneHyphen}>-</Text>
 
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="mail-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.email}
-                          onPress={() => showTooltip("email")}
-                        />
-                      </View>
-
-                      <Text style={styles.infoLabel}>이메일</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "email"}
-                        message={errors.email}
-                      />
-                    </View>
-
-                    <View style={{ minWidth: 160, alignItems: "flex-end" }}>
-                      <TextInput
-                        ref={emailRef}
-                        value={draft.email}
-                        editable={editingKey === "email"}
-                        selection={emailSelection}
-                        onSelectionChange={(e) =>
-                          setEmailSelection(e.nativeEvent.selection)
-                        }
-                        onFocus={() => {
-                          const len = draft.email.length;
-                          setEmailSelection({ start: len, end: len });
-                        }}
-                        placeholder="이메일 입력"
-                        placeholderTextColor="rgba(17,24,39,0.28)"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={(t) => {
-                          setDraft((p) => ({ ...p, email: t }));
-                          const len = t.length;
-                          setEmailSelection({ start: len, end: len });
-                          setErrors((prev) => ({ ...prev, email: undefined }));
-                          if (tooltipField === "email") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        onSubmitEditing={endEditing}
+                      <Text
                         style={[
-                          styles.infoInput,
-                          editingKey !== "email" && styles.infoInputReadOnly,
+                          styles.phoneCellText,
+                          styles.phoneCellB,
+                          !phoneB && styles.phonePlaceholder,
                         ]}
-                        returnKeyType="done"
-                      />
+                      >
+                        {phoneB || "0000"}
+                      </Text>
 
-                      {editingKey !== "email" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("email")}
-                        />
-                      )}
+                      <Text style={styles.profilePhoneHyphen}>-</Text>
+
+                      <Text
+                        style={[
+                          styles.phoneCellText,
+                          styles.phoneCellB,
+                          !phoneC && styles.phonePlaceholder,
+                        ]}
+                      >
+                        {phoneC || "0000"}
+                      </Text>
                     </View>
-                  </View>
+
+                    <TextInput
+                      ref={phoneInputRef}
+                      style={styles.hiddenPhoneInput}
+                      value={phoneDigits}
+                      onFocus={() => scrollToY(120)}
+                      onChangeText={(text) => {
+                        setPhoneDigits(onlyDigits(text));
+                        setErrors((prev) => ({ ...prev, phone: undefined }));
+                      }}
+                      keyboardType="number-pad"
+                      maxLength={11}
+                      returnKeyType="done"
+                      caretHidden
+                      contextMenuHidden
+                    />
+                  </Pressable>
                 </View>
-                <View style={styles.cardDivider} />
-
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="call-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.phone}
-                          onPress={() => showTooltip("phone")}
-                        />
-                      </View>
-
-                      <Text style={styles.infoLabel}>전화번호</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "phone"}
-                        message={errors.phone}
-                      />
-                    </View>
-
-                    <View style={styles.phoneRowBox}>
-                      <PhoneVisualSlot
-                        max={3}
-                        baseText={A_BASE}
-                        digits={aDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "A"}
-                        cursorIndex={cursorIndexA}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={bDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "B"}
-                        cursorIndex={cursorIndexB}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={cDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "C"}
-                        cursorIndex={cursorIndexC}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <TextInput
-                        ref={phoneInputRef}
-                        value={phoneDigits}
-                        editable={editingKey === "phone"}
-                        keyboardType="number-pad"
-                        maxLength={11}
-                        caretHidden
-                        contextMenuHidden
-                        selection={{
-                          start: phoneDigits.length,
-                          end: phoneDigits.length,
-                        }}
-                        onChangeText={(text) => {
-                          const next = text.replace(/[^0-9]/g, "").slice(0, 11);
-                          setPhoneDigits(next);
-                          setErrors((prev) => ({ ...prev, phone: undefined }));
-                          if (tooltipField === "phone") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        style={styles.hiddenPhoneInput}
-                      />
-
-                      {editingKey !== "phone" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("phone")}
-                        />
-                      )}
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.cardDivider} />
+                {!!errors.phone && (
+                  <Text style={styles.modalErrorText}>{errors.phone}</Text>
+                )}
               </View>
 
               <View style={styles.linkedHeader}>
@@ -2102,73 +1913,45 @@ function ProfileModal({
               </View>
 
               <View style={styles.targetsCard}>
-                <ScrollView
-                  style={styles.targetsScroll}
-                  contentContainerStyle={styles.targetsScrollContent}
-                  showsVerticalScrollIndicator={draftTargets.length > 2}
-                  nestedScrollEnabled
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {draftTargets.map((t, index) => (
-                    <View key={t.id}>
+                {draftTargets.length === 0 ? (
+                  <View style={styles.emptyTargetsBox}>
+                    <Text style={styles.emptyTargetsText}>
+                      연결된 대상자가 없습니다.
+                    </Text>
+                  </View>
+                ) : (
+                  draftTargets.map((target, index) => (
+                    <View key={target.id}>
                       <View style={styles.targetRow}>
                         <View style={styles.targetAvatar}>
                           <Ionicons name="happy" size={18} color="#fff" />
                         </View>
 
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.targetName}>{t.name}</Text>
-                          <Text style={styles.targetSub}>{t.sub}</Text>
+                          <Text style={styles.targetName}>{target.name}</Text>
+                          <Text style={styles.targetSub}>{target.sub}</Text>
                         </View>
 
-                        {canManageChildren && (
-                          <Pressable
-                            onPress={(event) => {
-                              event.stopPropagation?.();
-                              openDeleteChildModal(t);
-                            }}
-                            style={styles.trashBtn}
-                            hitSlop={10}
-                          >
-                            <Ionicons
-                              name="trash"
-                              size={18}
-                              color={COLORS.danger}
-                            />
-                          </Pressable>
-                        )}
+                        <Pressable
+                          onPress={() => removeTarget(target.id)}
+                          style={styles.trashBtn}
+                          hitSlop={10}
+                        >
+                          <Ionicons
+                            name="trash"
+                            size={18}
+                            color={COLORS.danger}
+                          />
+                        </Pressable>
                       </View>
 
                       {index !== draftTargets.length - 1 && (
                         <View style={styles.divider} />
                       )}
                     </View>
-                  ))}
-
-                  {draftTargets.length === 0 && (
-                    <View style={styles.emptyTargetsBox}>
-                      <Text style={styles.emptyTargetsText}>
-                        연결된 대상자가 없습니다.
-                      </Text>
-                    </View>
-                  )}
-                </ScrollView>
+                  ))
+                )}
               </View>
-
-              {canManageChildren && (
-                <View style={styles.addChildArea}>
-                  <Pressable
-                    style={styles.addChildBtn}
-                    onPress={() => {
-                      hideKeyboardAndTooltip();
-                      setChildModalOpen(true);
-                    }}
-                  >
-                    <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
-                    <Text style={styles.addChildBtnText}>자녀 추가하기</Text>
-                  </Pressable>
-                </View>
-              )}
 
               <View style={styles.modalBottomBtns}>
                 <Pressable
@@ -2189,157 +1972,11 @@ function ProfileModal({
                   </Text>
                 </Pressable>
               </View>
-            </Pressable>
-          </ScrollView>
+            </ScrollView>
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
-
-    <Modal
-      visible={!!deleteTarget}
-      transparent
-      animationType="fade"
-      onRequestClose={closeDeleteChildModal}
-    >
-      <Pressable style={styles.childModalDim} onPress={closeDeleteChildModal}>
-        <Pressable
-          style={styles.deleteConfirmSheet}
-          onPress={(event) => event.stopPropagation()}
-        >
-          <Text style={styles.deleteConfirmTitle}>회원 탈퇴하시겠습니까?</Text>
-          {!!deleteTarget && (
-            <Text style={styles.deleteConfirmSub}>{deleteTarget.name}</Text>
-          )}
-          {!!deleteError && (
-            <Text style={styles.childErrorText}>{deleteError}</Text>
-          )}
-
-          <View style={styles.deleteConfirmBtns}>
-            <Pressable
-              style={[styles.deleteConfirmBtn, styles.btnGhost]}
-              onPress={closeDeleteChildModal}
-              disabled={deletingChild}
-            >
-              <Text style={[styles.bottomBtnText, styles.btnGhostText]}>아니오</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.deleteConfirmBtn,
-                styles.deleteDangerBtn,
-                deletingChild && { opacity: 0.55 },
-              ]}
-              onPress={submitDeleteChild}
-              disabled={deletingChild}
-            >
-              <Text style={styles.deleteDangerText}>
-                {deletingChild ? "삭제 중..." : "예"}
-              </Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-
-    <Modal
-      visible={childModalOpen}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setChildModalOpen(false)}
-    >
-      <Pressable
-        style={styles.childModalDim}
-        onPress={() => {
-          Keyboard.dismiss();
-          setChildModalOpen(false);
-        }}
-      >
-        <Pressable
-          style={styles.childModalSheet}
-          onPress={(event) => event.stopPropagation()}
-        >
-          <View style={styles.childModalTop}>
-            <Text style={styles.childModalTitle}>자녀 추가하기</Text>
-            <Pressable
-              onPress={() => setChildModalOpen(false)}
-              style={styles.modalCloseBtn}
-              hitSlop={10}
-            >
-              <Ionicons name="close" size={12} color="#fff" />
-            </Pressable>
-          </View>
-
-          <View style={styles.childModalBody}>
-            <TextInput
-              value={childDraft.name}
-              onChangeText={(text) => changeChildDraft("name", text)}
-              placeholder="자녀 이름"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              style={styles.childInput}
-              returnKeyType="next"
-              autoComplete="off"
-              textContentType="none"
-              importantForAutofill="no"
-            />
-            <TextInput
-              value={childDraft.age}
-              onChangeText={(text) =>
-                changeChildDraft("age", text.replace(/[^0-9]/g, ""))
-              }
-              placeholder="나이"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              keyboardType="number-pad"
-              style={styles.childInput}
-              autoComplete="off"
-              textContentType="none"
-              importantForAutofill="no"
-            />
-            <TextInput
-              value={childDraft.loginId}
-              onChangeText={(text) => changeChildDraft("loginId", text)}
-              placeholder="자녀 로그인 아이디"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.childInput}
-              returnKeyType="next"
-              autoComplete="off"
-              textContentType="none"
-              importantForAutofill="no"
-            />
-            <TextInput
-              value={childDraft.password}
-              onChangeText={(text) => changeChildDraft("password", text)}
-              placeholder="비밀번호"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.childInput}
-              returnKeyType="done"
-              onSubmitEditing={submitChild}
-              autoComplete="new-password"
-              textContentType="newPassword"
-              importantForAutofill="no"
-            />
-
-            {!!childError && (
-              <Text style={styles.childErrorText}>{childError}</Text>
-            )}
-
-            <Pressable
-              style={[styles.childSaveBtn, addingChild && { opacity: 0.55 }]}
-              onPress={submitChild}
-              disabled={addingChild}
-            >
-              <Text style={styles.childSaveBtnText}>
-                {addingChild ? "저장 중..." : "저장"}
-              </Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-    </>
   );
 }
 
@@ -2348,95 +1985,1015 @@ const styles = StyleSheet.create({
   topBar: { backgroundColor: COLORS.primary },
   body: { flex: 1 },
 
-  map: { flex: 1, backgroundColor: "#DCEEFF" },
-  road: { position: "absolute", left: 0, right: 0, backgroundColor: "#94A3B8" },
-  roadV: {
+  map: {
+    flex: 1,
+    backgroundColor: "#DCEEFF",
+    position: "relative",
+    overflow: "hidden",
+  },
+
+  mockMap: {
+    flex: 1,
+    backgroundColor: "#DCEEFF",
+    position: "relative",
+    overflow: "hidden",
+  },
+
+  mockMapCanvas: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  draggableMapGroup: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  mockRoad: {
     position: "absolute",
+    backgroundColor: "rgba(100,116,139,0.40)",
+  },
+
+  roadVerticalLeft: {
+    left: 90,
     top: 0,
     bottom: 0,
-    backgroundColor: "#94A3B8",
+    width: 9,
   },
 
-  geofence: {
+  roadVerticalCenter: {
+    left: 288,
+    top: 98,
+    bottom: 105,
+    width: 7,
+    opacity: 0.28,
+  },
+
+  roadVerticalRight: {
+    right: 57,
+    top: 292,
+    bottom: 95,
+    width: 7,
+    opacity: 0.28,
+  },
+
+  roadHorizontalTop: {
+    left: 0,
+    right: 0,
+    top: 190,
+    height: 8,
+    opacity: 0.26,
+  },
+
+  roadHorizontalMiddle: {
+    left: 0,
+    right: 0,
+    top: 384,
+    height: 9,
+  },
+
+  roadHorizontalBottom: {
+    left: 0,
+    right: 96,
+    bottom: 388,
+    height: 8,
+    opacity: 0.24,
+  },
+
+  mockDiagonalRoad: {
     position: "absolute",
-    width: 190,
-    height: 190,
-    borderRadius: 95,
-    backgroundColor: "rgba(239,68,68,0.12)",
+    left: 95,
+    top: 390,
+    width: 350,
+    height: 9,
+    backgroundColor: "rgba(100,116,139,0.40)",
+    transform: [{ rotate: "49deg" }],
+  },
+
+  safeZone: {
+    position: "absolute",
+    left: 92,
+    top: 92,
+    width: 178,
+    height: 178,
+    borderRadius: 89,
     borderWidth: 3,
-    borderColor: "rgba(239,68,68,0.55)",
+    borderColor: "rgba(255,47,69,0.58)",
+    backgroundColor: "rgba(255,47,69,0.09)",
+    shadowColor: "#FF2F45",
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
   },
 
-  schoolTextOnly: {
-    position: "absolute",
-    fontSize: 13,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.75)",
+  routeLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 6,
   },
 
-  markerWrap: { position: "absolute", alignItems: "center" },
-  dangerBubble: {
+  routePathSegment: {
     position: "absolute",
-    top: -8,
-    zIndex: 3,
-    width: 19,
-    height: 19,
-    borderRadius: 9,
-    backgroundColor: COLORS.danger,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 3,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(37,99,235,0.88)",
+    zIndex: 6,
+  },
+
+  routeDotGuardian: {
+    position: "absolute",
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.primary,
+    borderWidth: 2,
     borderColor: "#fff",
+    zIndex: 8,
   },
 
-  avatar: {
-    width: 37,
-    height: 37,
-    borderRadius: 18,
+  routeDotDanger: {
+    position: "absolute",
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF2F45",
+    borderWidth: 2,
+    borderColor: "#fff",
+    zIndex: 8,
+  },
+
+  routeMiniBox: {
+    position: "absolute",
+    height: 26,
+    width: 108,
+    borderRadius: 8,
     backgroundColor: "#fff",
-    borderWidth: 4,
+    paddingHorizontal: 9,
     alignItems: "center",
     justifyContent: "center",
-    ...SHADOW.floating,
+    borderWidth: 1,
+    borderColor: "rgba(37,99,235,0.18)",
+    zIndex: 9,
+    ...SHADOW.card,
   },
-  avatarInner: { width: 22, height: 22, borderRadius: 11 },
 
-  namePill: {
-    marginTop: 6,
-    paddingHorizontal: 14,
-    height: 30,
-    borderRadius: RADIUS.pill,
+  routeMiniTitle: {
+    fontSize: 0,
+    height: 0,
+  },
+
+  routeMiniText: {
+    marginTop: 0,
+    fontSize: 10.5,
+    fontWeight: "900",
+    color: "#334155",
+  },
+
+  routeBtn: {
+    position: "absolute",
+    left: 20,
+    top: 22,
+    width: 46,
+    height: 46,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 20,
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+
+  routeBtnActive: {
+    borderWidth: 2,
+    borderColor: "rgba(37,99,235,0.28)",
+  },
+
+  zoomBox: {
+    position: "absolute",
+    left: 20,
+    bottom: 18,
+    width: 44,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    zIndex: 20,
+    ...SHADOW.card,
+  },
+
+  zoomBtn: {
+    width: 44,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  zoomDivider: {
+    height: 1,
+    backgroundColor: "rgba(15,23,42,0.10)",
+  },
+
+  rightControlBox: {
+    position: "absolute",
+    right: 20,
+    bottom: 18,
+    gap: 10,
+    zIndex: 20,
+  },
+
+  rightBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
     ...SHADOW.card,
   },
-  nameText: { color: "#fff", fontWeight: "900", fontSize: 13.5 },
+
+  rightBtnPrimary: {
+    backgroundColor: COLORS.primary,
+  },
+
+  walkIcon: {
+    fontSize: 27,
+  },
+
+  sosBtn: {
+    position: "absolute",
+    left: "50%",
+    bottom: 56,
+    width: 170,
+    height: 44,
+    marginLeft: -85,
+    borderRadius: 13,
+    backgroundColor: "#FF2F45",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 7,
+    zIndex: 20,
+    ...SHADOW.card,
+  },
+
+  sosBtnText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#fff",
+  },
+
+  targetGreenWrap: {
+    position: "absolute",
+    left: 160,
+    top: 150,
+    alignItems: "center",
+    zIndex: 8,
+  },
+
+  targetOrangeWrap: {
+    position: "absolute",
+    left: 70,
+    top: 280,
+    alignItems: "center",
+    zIndex: 9,
+  },
+
+  personMarkerRingGreen: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    ...SHADOW.soft,
+  },
+
+  personMarkerRingOrange: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    ...SHADOW.soft,
+  },
+
+  personCircleGreen: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#12B85C",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+
+  personCircleOrange: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F97316",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+
+  personEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
+
+  greenName: {
+    marginTop: -1,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 7,
+    backgroundColor: "#12B85C",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+
+  orangeName: {
+    marginTop: -1,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 7,
+    backgroundColor: "#F04A16",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+
+  markerAlertBadgeSmall: {
+    position: "absolute",
+    top: -20,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#FF2F45",
+    borderWidth: 3,
+    borderColor: "rgba(255,255,255,0.96)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 30,
+    ...SHADOW.soft,
+  },
+
+  markerAlertText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 17,
+  },
+
+  guardianWrap: {
+    position: "absolute",
+    left: "50%",
+    bottom: 60,
+    marginLeft: -23,
+    alignItems: "center",
+    zIndex: 10,
+  },
+
+  guardianMarkerRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    ...SHADOW.soft,
+  },
+
+  guardianCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+
+  guardianName: {
+    marginTop: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 7,
+    backgroundColor: COLORS.primary,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    overflow: "hidden",
+  },
+
+  placeSchool: {
+    position: "absolute",
+    left: 156,
+    top: 206,
+    alignItems: "center",
+  },
+
+  placePolice: {
+    position: "absolute",
+    right: 18,
+    top: 223,
+    alignItems: "center",
+  },
+
+  placeLibrary: {
+    position: "absolute",
+    right: 105,
+    top: 324,
+    alignItems: "center",
+  },
+
+  placeMart: {
+    position: "absolute",
+    left: 162,
+    bottom: 318,
+    alignItems: "center",
+  },
+
+  placeFood: {
+    position: "absolute",
+    right: 150,
+    bottom: 405,
+    alignItems: "center",
+  },
+
+  placeEmoji: {
+    fontSize: 15,
+  },
+
+  placeText: {
+    marginTop: 2,
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "700",
+  },
+
+  sosNoticeBox: {
+    position: "absolute",
+    top: 12,
+    left: "50%",
+    width: 286,
+    minHeight: 46,
+    marginLeft: -143,
+    borderRadius: 13,
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 50,
+    ...SHADOW.card,
+  },
+
+  sosNoticeLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingRight: 24,
+  },
+
+  sosNoticeCloseBtn: {
+    position: "absolute",
+    right: 10,
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  noticeAlertIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FF2F45",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  noticeAlertText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 17,
+  },
+
+  sosNoticeText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111827",
+    textAlign: "center",
+  },
+
+  dangerPopupBox: {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    width: 270,
+    marginLeft: -134,
+    marginTop: -116,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderWidth: 1.2,
+    borderColor: "rgba(249,115,22,0.58)",
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+    zIndex: 80,
+    ...SHADOW.card,
+  },
+
+  dangerPopupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 9,
+  },
+
+  dangerPopupTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  dangerPopupCloseBtn: {
+    width: 30,
+    height: 30,
+    marginRight: -3,
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  dangerAlertList: {
+    gap: 7,
+  },
+
+  dangerAlertItem: {
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+
+  dangerAlertItemSos: {
+    backgroundColor: "rgba(255,47,69,0.06)",
+    borderColor: "rgba(255,47,69,0.22)",
+  },
+
+  dangerAlertItemGeofence: {
+    backgroundColor: "rgba(249,115,22,0.07)",
+    borderColor: "rgba(249,115,22,0.25)",
+  },
+
+  dangerAlertItemHeart: {
+    backgroundColor: "rgba(250,204,21,0.10)",
+    borderColor: "rgba(234,179,8,0.36)",
+  },
+
+  dangerAlertIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  dangerAlertIconSos: {
+    backgroundColor: "rgba(255,47,69,0.10)",
+  },
+
+  dangerAlertIconGeofence: {
+    backgroundColor: "rgba(249,115,22,0.11)",
+  },
+
+  dangerAlertIconHeart: {
+    backgroundColor: "rgba(234,179,8,0.12)",
+  },
+
+  dangerAlertTitle: {
+    fontSize: 12.5,
+    fontWeight: "900",
+  },
+
+  dangerAlertTitleSos: {
+    color: "#DC2626",
+  },
+
+  dangerAlertTitleGeofence: {
+    color: "#EA580C",
+  },
+
+  dangerAlertTitleHeart: {
+    color: "#B45309",
+  },
+
+  dangerAlertTime: {
+    marginTop: 1,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+
+  modeScreen: {
+    flex: 1,
+    position: "relative",
+    overflow: "hidden",
+  },
+
+  satelliteScreen: {
+    backgroundColor: "#1E3A2F",
+  },
+
+  roadViewScreen: {
+    backgroundColor: "#CBD5E1",
+  },
+
+  modeBackBtn: {
+    position: "absolute",
+    left: 18,
+    top: 18,
+    width: 94,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    zIndex: 10,
+    ...SHADOW.card,
+  },
+
+  modeBackText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  modeCenterCard: {
+    position: "absolute",
+    left: 26,
+    right: 26,
+    top: "42%",
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    alignItems: "center",
+    ...SHADOW.card,
+  },
+
+  modeTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  modeDescription: {
+    marginTop: 7,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+    color: "#475569",
+    textAlign: "center",
+  },
+
+  satelliteGrid: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  satelliteBlockLarge: {
+    position: "absolute",
+    left: 28,
+    top: 96,
+    width: 190,
+    height: 160,
+    backgroundColor: "rgba(34,197,94,0.22)",
+    transform: [{ rotate: "10deg" }],
+  },
+
+  satelliteBlockSmall: {
+    position: "absolute",
+    right: 32,
+    bottom: 130,
+    width: 150,
+    height: 150,
+    backgroundColor: "rgba(234,179,8,0.18)",
+    transform: [{ rotate: "-18deg" }],
+  },
+
+  satelliteRoad: {
+    position: "absolute",
+    left: -40,
+    top: 330,
+    width: 620,
+    height: 24,
+    backgroundColor: "rgba(226,232,240,0.22)",
+    transform: [{ rotate: "31deg" }],
+  },
+
+  satelliteRoadSecond: {
+    position: "absolute",
+    left: 120,
+    top: -30,
+    width: 28,
+    height: 900,
+    backgroundColor: "rgba(226,232,240,0.18)",
+    transform: [{ rotate: "-8deg" }],
+  },
+
+  roadViewMock: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  roadViewSky: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    height: "48%",
+    backgroundColor: "#BFDBFE",
+  },
+
+  roadViewGround: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "58%",
+    backgroundColor: "#475569",
+  },
+
+  roadViewLaneLeft: {
+    position: "absolute",
+    left: "28%",
+    bottom: -50,
+    width: 6,
+    height: "62%",
+    backgroundColor: "rgba(255,255,255,0.75)",
+    transform: [{ rotate: "13deg" }],
+  },
+
+  roadViewLaneRight: {
+    position: "absolute",
+    right: "28%",
+    bottom: -50,
+    width: 6,
+    height: "62%",
+    backgroundColor: "rgba(255,255,255,0.75)",
+    transform: [{ rotate: "-13deg" }],
+  },
+
+  roadViewCenterLine: {
+    position: "absolute",
+    left: "50%",
+    bottom: 0,
+    marginLeft: -3,
+    width: 6,
+    height: "45%",
+    backgroundColor: "rgba(250,204,21,0.85)",
+  },
+
+  mapLoading: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    marginLeft: -18,
+    marginTop: -18,
+    zIndex: 2,
+  },
+
+  mapErrorBox: {
+    position: "absolute",
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 3,
+    backgroundColor: "white",
+    padding: 12,
+    borderRadius: 12,
+  },
+
+  targetModalDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
+  targetModalKeyboard: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  targetSheet: {
+    width: "88%",
+    maxHeight: "88%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    overflow: "hidden",
+    alignSelf: "center",
+    ...SHADOW.floating,
+  },
+
+  targetModalTop: {
+    height: 50,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  targetModalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#fff",
+  },
+
+  targetCloseBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  targetForm: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 20,
+  },
+
+  targetInputBlock: {
+    marginBottom: 12,
+  },
+
+  targetLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 9,
+  },
+
+  targetLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#475569",
+  },
+
+  targetInput: {
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1.2,
+    borderColor: "rgba(148,163,184,0.35)",
+    paddingHorizontal: 14,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  selectBox: {
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1.2,
+    borderColor: "rgba(148,163,184,0.35)",
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  selectInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  addressBox: {
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1.2,
+    borderColor: "rgba(148,163,184,0.35)",
+    paddingLeft: 14,
+    paddingRight: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  addressInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  searchBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  targetGuideBox: {
+    borderRadius: 12,
+    backgroundColor: "rgba(59,130,246,0.08)",
+    borderWidth: 1.2,
+    borderColor: "rgba(59,130,246,0.28)",
+    padding: 10,
+    marginBottom: 16,
+  },
+
+  targetGuideText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+    color: "#475569",
+  },
+
+  targetBottomBtns: {
+    flexDirection: "row",
+    gap: 12,
+  },
+
+  cancelBtn: {
+    flex: 1,
+    height: 45,
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: "rgba(148,163,184,0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+
+  cancelBtnText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#475569",
+  },
+
+  registerBtn: {
+    flex: 1,
+    height: 45,
+    borderRadius: 14,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.card,
+  },
+
+  registerBtnText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#fff",
+  },
 
   modalDim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.35)",
   },
+
+  modalKeyboard: {
+    flex: 1,
+  },
+
   modalCenter: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingTop: 47,
-    paddingBottom: 10,
+    paddingTop: 20,
+    paddingBottom: 0,
   },
+
   modalSheet: {
     width: "88%",
-    maxHeight: "81%",
+    maxHeight: "88%",
     backgroundColor: "#fff",
     borderRadius: 20,
-    overflow: "visible",
+    overflow: "hidden",
     ...SHADOW.floating,
   },
 
   modalScroll: {
     flexGrow: 0,
   },
+
   modalScrollContent: {
-    paddingBottom: 0,
+    paddingBottom: 120,
   },
 
   modalTop: {
@@ -2446,41 +3003,57 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
   },
+
   modalTitle: {
     color: "#fff",
     fontSize: 17,
-    fontWeight: "700",
-    marginTop: 2,
-    marginLeft: 2,
-  },
-  modalCloseBtn: {
-    width: 23,
-    height: 23,
-    borderRadius: 17,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
+    fontWeight: "800",
+    marginTop: 1,
   },
 
-  profileCenter: { alignItems: "center", paddingTop: 22 },
+  modalCloseBtn: {
+    width: 28,
+    height: 28,
+    marginRight: -4,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+
+  profileCenter: {
+    alignItems: "center",
+    paddingTop: 22,
+    paddingBottom: 8,
+  },
+
+  profileAvatarWrap: {
+    position: "relative",
+    width: 86,
+    height: 86,
+  },
+
   profileAvatar: {
     width: 86,
     height: 86,
     borderRadius: 43,
-    backgroundColor: "rgba(59,130,246,0.85)",
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     ...SHADOW.card,
   },
+
+  profileAvatarImage: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+  },
+
   cameraBadge: {
     position: "absolute",
-    right: 4,
-    bottom: 4,
+    right: 0,
+    bottom: 0,
     width: 28,
     height: 28,
     borderRadius: 14,
@@ -2488,44 +3061,41 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(0,0,0,0.08)",
+    ...SHADOW.card,
   },
 
-  nameSlot: {
+  profileNameInput: {
     marginTop: 10,
-    height: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  namePress: { height: 28, justifyContent: "center" },
-  profileName: {
+    minWidth: 140,
+    maxWidth: 220,
+    height: 30,
     fontSize: 20,
     fontWeight: "900",
     color: "#111827",
-    lineHeight: 24,
     textAlign: "center",
-  },
-
-  nameInput: {
-    height: 28,
-    fontSize: 20,
-    fontWeight: "900",
-    color: "#111827",
-    lineHeight: 24,
-    textAlign: "center",
-    borderWidth: 0,
-    backgroundColor: "transparent",
     paddingVertical: 0,
     paddingHorizontal: 0,
-    includeFontPadding: false,
+  },
+
+  nameErrorText: {
+    marginTop: 2,
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: COLORS.danger,
+    textAlign: "center",
   },
 
   infoCard: {
     marginHorizontal: 16,
-    marginTop: 0,
+    marginTop: 8,
     backgroundColor: "#fff",
+    borderRadius: 0,
+    borderWidth: 0,
+    borderColor: "transparent",
     overflow: "visible",
   },
+
   cardDivider: {
     height: 1,
     backgroundColor: "rgba(17,24,39,0.06)",
@@ -2534,84 +3104,32 @@ const styles = StyleSheet.create({
   },
 
   infoRow: {
-    paddingTop: 14,
-    paddingBottom: 14,
+    minHeight: 50,
+    paddingVertical: 10,
     paddingHorizontal: 15,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
+
   infoLeft: {
-    position: "relative",
     flexDirection: "row",
     alignItems: "center",
     gap: 7.5,
   },
-  infoLabel: { fontSize: 14, fontWeight: "700", color: "rgba(17,24,39,0.70)" },
 
-  iconWrap: {
-    position: "relative",
-    width: 20,
-    height: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  errorDot: {
-    position: "absolute",
-    left: -6,
-    top: -10,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: COLORS.danger,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  errorDotText: {
-    color: "#fff",
-    fontSize: 8,
-    fontWeight: "900",
-    lineHeight: 10,
-  },
-
-  tooltipBox: {
-    position: "absolute",
-    left: -17,
-    top: -51,
-    backgroundColor: "rgba(17,24,39,0.94)",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    alignSelf: "flex-start",
-    maxWidth: 260,
-    zIndex: 30,
-  },
-
-  tooltipText: {
-    color: "#fff",
-    fontSize: 11.5,
-    fontWeight: "700",
-    lineHeight: 16,
-    flexShrink: 1,
-  },
-
-  tooltipArrow: {
-    position: "absolute",
-    left: 11,
-    bottom: -6,
-    width: 12,
-    height: 12,
-    backgroundColor: "rgba(17,24,39,0.94)",
-    transform: [{ rotate: "45deg" }],
+  infoLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.58)",
   },
 
   infoInput: {
-    minWidth: 140,
-    maxWidth: 210,
+    flex: 1,
+    maxWidth: 190,
     fontSize: 14,
-    fontWeight: "800",
-    color: "rgba(14, 19, 32, 0.7)",
+    fontWeight: "900",
+    color: "rgba(14,19,32,0.75)",
     textAlign: "right",
     borderWidth: 0,
     backgroundColor: "transparent",
@@ -2619,115 +3137,116 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     includeFontPadding: false,
   },
-  infoInputReadOnly: { paddingVertical: 0 },
 
-  phoneRowBox: {
+  modalErrorText: {
+    marginTop: -6,
+    marginBottom: 8,
+    marginHorizontal: 16,
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: COLORS.danger,
+    textAlign: "right",
+  },
+
+  profilePhoneBox: {
+    minWidth: 108,
+    alignItems: "flex-end",
+    justifyContent: "center",
     position: "relative",
+  },
+
+  profilePhoneDisplayRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    minWidth: 190,
-    maxWidth: 230,
   },
-  phoneHyphen: {
-    width: 12,
+
+  phoneCellText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(14,19,32,0.75)",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+
+  phoneCellA: {
+    width: 25,
+  },
+
+  phoneCellB: {
+    width: 34,
+  },
+
+  phonePlaceholder: {
+    color: "rgba(17,24,39,0.30)",
+  },
+
+  profilePhoneHyphen: {
+    width: 5,
     textAlign: "center",
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
     includeFontPadding: false,
-  },
-
-  slotWrap: {
-    position: "relative",
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  slotRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-start",
-  },
-  slotOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-  },
-
-  slotBaseChar: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.28)",
-    letterSpacing: 0,
-    textAlign: "center",
-    includeFontPadding: false,
-  },
-  slotTopChar: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "rgba(14, 19, 32, 0.70)",
-    letterSpacing: 0,
-    textAlign: "center",
-    includeFontPadding: false,
-  },
-  charTransparent: { opacity: 0 },
-
-  slotCursor: {
-    position: "absolute",
-    top: 1,
-    width: 2,
-    borderRadius: 1,
-    backgroundColor: COLORS.primary,
   },
 
   hiddenPhoneInput: {
     position: "absolute",
     opacity: 0,
-    width: 1,
-    height: 1,
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
 
   linkedHeader: {
     marginTop: 16,
-    marginHorizontal: 16,
+    marginHorizontal: 22,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  linkedTitle: { fontSize: 16, fontWeight: "900", color: "rgba(17,24,39,0.7)" },
+
+  linkedTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
+  },
 
   targetsCard: {
     marginHorizontal: 16,
     marginTop: 10,
-    minHeight: 135,
-    maxHeight: 135,
+    minHeight: 132,
+    maxHeight: 160,
     borderRadius: 16,
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.06)",
     overflow: "hidden",
   },
-  targetsScroll: {
-    flex: 1,
-  },
-  targetsScrollContent: {
-    minHeight: 150,
-  },
+
   targetRow: {
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  divider: { height: 1, backgroundColor: "rgba(17,24,39,0.06)" },
+
+  divider: {
+    height: 1,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    marginLeft: 64,
+  },
 
   emptyTargetsBox: {
     flex: 1,
-    minHeight: 150,
+    minHeight: 132,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 16,
   },
+
   emptyTargetsText: {
     fontSize: 14,
     fontWeight: "700",
@@ -2742,9 +3261,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  targetName: { fontSize: 16, fontWeight: "900", color: "#111827" },
+
+  targetName: {
+    fontSize: 15.5,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
   targetSub: {
-    marginTop: 4,
+    marginTop: 3,
     fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.55)",
@@ -2759,133 +3284,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  addChildArea: {
-    marginHorizontal: 16,
-    marginTop: 12,
-  },
-  addChildBtn: {
-    height: 44,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(59,130,246,0.22)",
-    backgroundColor: "rgba(59,130,246,0.08)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  addChildBtnText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: COLORS.primary,
-  },
-  childForm: {
-    marginTop: 10,
-    gap: 8,
-  },
-  childModalDim: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.42)",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 22,
-  },
-  childModalSheet: {
-    width: "100%",
-    maxWidth: 360,
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    overflow: "hidden",
-    ...SHADOW.floating,
-  },
-  childModalTop: {
-    height: 50,
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  childModalTitle: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  childModalBody: {
+  modalBottomBtns: {
     padding: 16,
-    gap: 9,
-  },
-  deleteConfirmSheet: {
-    width: "100%",
-    maxWidth: 320,
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    padding: 18,
-    gap: 12,
-    ...SHADOW.floating,
-  },
-  deleteConfirmTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#111827",
-    textAlign: "center",
-  },
-  deleteConfirmSub: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.55)",
-    textAlign: "center",
-  },
-  deleteConfirmBtns: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 2,
-  },
-  deleteConfirmBtn: {
-    flex: 1,
-    height: 42,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deleteDangerBtn: {
-    backgroundColor: COLORS.danger,
-  },
-  deleteDangerText: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: "#fff",
-  },
-  childInput: {
-    height: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
-    backgroundColor: "#fff",
-    paddingHorizontal: 12,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  childErrorText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: COLORS.danger,
-  },
-  childSaveBtn: {
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  childSaveBtnText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#fff",
+    gap: 12,
   },
 
-  modalBottomBtns: { padding: 16, flexDirection: "row", gap: 12 },
   bottomBtn: {
     flex: 1,
     height: 45,
@@ -2893,15 +3297,63 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  bottomBtnText: { fontSize: 16, fontWeight: "900" },
 
-  btnPrimary: { backgroundColor: COLORS.primary },
-  btnPrimaryText: { color: "#fff" },
+  bottomBtnText: {
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  btnPrimary: {
+    backgroundColor: COLORS.primary,
+  },
+
+  btnPrimaryText: {
+    color: "#fff",
+  },
 
   btnGhost: {
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
-  btnGhostText: { color: "rgba(17,24,39,0.75)" },
+
+  btnGhostText: {
+    color: "rgba(17,24,39,0.75)",
+  },
+
+  loginToastWrap: {
+    position: "absolute",
+    top: 60,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 999,
+  },
+
+  loginToastBox: {
+    minHeight: 46,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: "rgba(235,255,243,0.95)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.35)",
+    flexDirection: "row",
+    alignItems: "center",
+    ...SHADOW.soft,
+  },
+
+  loginToastText: {
+    marginLeft: 7,
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#047857",
+  },
+  roleText: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.45)",
+    textAlign: "center",
+  },
 });

@@ -39,7 +39,12 @@ export default function RootLayout() {
 
   return (
     <AuthContext.Provider value={value}>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: "none",
+        }}
+      >
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="settings" />
