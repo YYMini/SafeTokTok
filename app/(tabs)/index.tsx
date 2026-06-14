@@ -822,6 +822,18 @@ function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
         level: 3,
         mapTypeId: ${mapType}
       });
+      window.safeTokTokMap = map;
+      window.safeTokTokCenter = center;
+      window.safeTokTokZoomIn = function () {
+        map.setLevel(Math.max(1, map.getLevel() - 1));
+      };
+      window.safeTokTokZoomOut = function () {
+        map.setLevel(Math.min(14, map.getLevel() + 1));
+      };
+      window.safeTokTokFit = function () {
+        map.setCenter(window.safeTokTokCenter);
+        map.setLevel(3);
+      };
 
       new kakao.maps.Marker({ map: map, position: center });
       new kakao.maps.CustomOverlay({
@@ -847,12 +859,15 @@ function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
 function NativeKakaoMap({
   dangerTarget,
   mapMode,
+  webViewRef,
 }: {
   dangerTarget: DangerTarget;
   mapMode: MapMode;
+  webViewRef?: React.RefObject<WebView>;
 }) {
   return (
     <WebView
+      ref={webViewRef}
       key={`${mapMode}-${dangerTarget.id}`}
       source={{ html: getNativeKakaoMapHtml(dangerTarget, mapMode) }}
       originWhitelist={["*"]}
@@ -869,6 +884,7 @@ function MockMap(props: MockMapProps) {
   const [dangerPopupOpen, setDangerPopupOpen] = useState(false);
   const [isDraggingMap, setIsDraggingMap] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
+  const nativeMapRef = useRef<WebView>(null);
 
   // 현재는 목업 데이터지만, 추후 서버/센서 데이터가 들어오면
   // 이 배열만 실시간 데이터로 교체하면 팝업 내용이 자동 반영됩니다.
@@ -912,6 +928,29 @@ function MockMap(props: MockMapProps) {
 
   const endMapDrag = () => {
     setIsDraggingMap(false);
+  };
+
+  const runNativeMapScript = (script: string) => {
+    nativeMapRef.current?.injectJavaScript(`${script}; true;`);
+  };
+
+  if (props.useKakaoMap && props.mapMode !== "roadview") {
+    return (
+      <View style={styles.mockMap}>
+        <NativeKakaoMap
+          dangerTarget={props.dangerTarget}
+          mapMode={props.mapMode}
+          webViewRef={nativeMapRef}
+        />
+
+        <MapOverlayControls
+          {...props}
+          onZoomIn={() => runNativeMapScript("window.safeTokTokZoomIn && window.safeTokTokZoomIn()")}
+          onZoomOut={() => runNativeMapScript("window.safeTokTokZoomOut && window.safeTokTokZoomOut()")}
+          onFit={() => runNativeMapScript("window.safeTokTokFit && window.safeTokTokFit()")}
+        />
+      </View>
+    );
   };
 
   if (props.mapMode === "satellite") {
