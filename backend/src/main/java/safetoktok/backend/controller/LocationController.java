@@ -47,16 +47,16 @@ public class LocationController {
             @RequestHeader(value = "X-User-Id", required = false) Long currentUserId,
             @RequestBody LocationRequest request
     ) {
-        Long childId = currentUserId != null ? currentUserId : request.getChildId();
-        if (childId == null) {
+        Long userId = currentUserId != null ? currentUserId : request.getChildId();
+        if (userId == null) {
             throw new IllegalArgumentException("로그인 사용자 정보를 찾을 수 없습니다.");
         }
 
-        UserEntity child = userRepository.findById(childId)
+        UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("위치를 저장할 사용자를 찾을 수 없습니다."));
 
-        if (child.getRole() != UserRole.CHILD) {
-            throw new IllegalArgumentException("자녀 계정만 위치를 저장할 수 있습니다.");
+        if (user.getRole() != UserRole.CHILD && user.getRole() != UserRole.PARENT) {
+            throw new IllegalArgumentException("자녀 또는 부모 계정만 위치를 저장할 수 있습니다.");
         }
 
         if (!isKakaoMapCoordinate(request.getLatitude(), request.getLongitude())) {
@@ -64,8 +64,8 @@ public class LocationController {
         }
 
         LocationEntity location = new LocationEntity(
-                child.getId(),
-                child.getName(),
+                user.getId(),
+                user.getName(),
                 request.getLatitude(),
                 request.getLongitude()
         );
@@ -75,7 +75,7 @@ public class LocationController {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("message", "위치 저장 완료");
-        result.put("childId", child.getId());
+        result.put("childId", user.getId());
         result.put("latitude", request.getLatitude());
         result.put("longitude", request.getLongitude());
         return result;
@@ -107,20 +107,24 @@ public class LocationController {
                 .map(ParentChildEntity::getChildId)
                 .toList();
 
-        if (childIds.isEmpty()) {
+        // 부모 자신의 ID도 포함
+        List<Long> allIds = new java.util.ArrayList<>(childIds);
+        allIds.add(0, parent.getId());
+
+        if (allIds.isEmpty()) {
             return List.of();
         }
 
-        Map<Long, UserEntity> children = userRepository.findAllById(childIds)
+        Map<Long, UserEntity> users = userRepository.findAllById(allIds)
                 .stream()
-                .collect(Collectors.toMap(UserEntity::getId, child -> child));
+                .collect(Collectors.toMap(UserEntity::getId, user -> user));
 
-        return locationRepository.findLatestLocationsByChildIds(childIds)
+        return locationRepository.findLatestLocationsByChildIds(allIds)
                 .stream()
                 .filter(location -> isKakaoMapCoordinate(location.getLatitude(), location.getLongitude()))
                 .map(location -> {
-                    UserEntity child = children.get(location.getChildId());
-                    String name = child == null ? location.getName() : child.getName();
+                    UserEntity user = users.get(location.getChildId());
+                    String name = user == null ? location.getName() : user.getName();
                     return toLocationResponse(location, name);
                 })
                 .toList();
