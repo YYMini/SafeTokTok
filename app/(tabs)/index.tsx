@@ -78,7 +78,7 @@ type ChildDraft = {
 };
 
 type MapTarget = {
-  childId: number;
+  userId: number;
   name: string;
   latitude: number;
   longitude: number;
@@ -874,7 +874,7 @@ function MapPlaceholder({
           "X-User-Id": String(currentUserId),
         },
         body: JSON.stringify({
-          childId: currentUserId,
+          userId: currentUserId,
           latitude: lat,
           longitude: lng,
         }),

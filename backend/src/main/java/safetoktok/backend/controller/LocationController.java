@@ -47,7 +47,8 @@ public class LocationController {
             @RequestHeader(value = "X-User-Id", required = false) Long currentUserId,
             @RequestBody LocationRequest request
     ) {
-        Long userId = currentUserId != null ? currentUserId : request.getChildId();
+        // X-User-Id 헤더에서 로그인된 사용자ID 우선 사용, 없으면 요청본문의 userId 사용
+        Long userId = currentUserId != null ? currentUserId : request.getUserId();
         if (userId == null) {
             throw new IllegalArgumentException("로그인 사용자 정보를 찾을 수 없습니다.");
         }
@@ -55,8 +56,9 @@ public class LocationController {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("위치를 저장할 사용자를 찾을 수 없습니다."));
 
+        // 부모(PARENT)와 자녀(CHILD) 계정만 위치 저장 가능
         if (user.getRole() != UserRole.CHILD && user.getRole() != UserRole.PARENT) {
-            throw new IllegalArgumentException("자녀 또는 부모 계정만 위치를 저장할 수 있습니다.");
+            throw new IllegalArgumentException("부모 또는 자녀 계정만 위치를 저장할 수 있습니다.");
         }
 
         if (!isKakaoMapCoordinate(request.getLatitude(), request.getLongitude())) {
@@ -75,7 +77,7 @@ public class LocationController {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("message", "위치 저장 완료");
-        result.put("childId", user.getId());
+        result.put("userId", user.getId());
         result.put("latitude", request.getLatitude());
         result.put("longitude", request.getLongitude());
         return result;
@@ -102,12 +104,13 @@ public class LocationController {
     }
 
     private List<LocationResponse> getLatestLocationsForParent(UserEntity parent) {
+        // 자녀 ID 목록 조회
         List<Long> childIds = parentChildRepository.findByParentId(parent.getId())
                 .stream()
                 .map(ParentChildEntity::getChildId)
                 .toList();
 
-        // 부모 자신의 ID도 포함
+        // 부모 자신의 ID도 포함 (부모 본인 위치도 지도에 표시)
         List<Long> allIds = new java.util.ArrayList<>(childIds);
         allIds.add(0, parent.getId());
 
@@ -119,11 +122,11 @@ public class LocationController {
                 .stream()
                 .collect(Collectors.toMap(UserEntity::getId, user -> user));
 
-        return locationRepository.findLatestLocationsByChildIds(allIds)
+        return locationRepository.findLatestLocationsByUserIds(allIds)
                 .stream()
                 .filter(location -> isKakaoMapCoordinate(location.getLatitude(), location.getLongitude()))
                 .map(location -> {
-                    UserEntity user = users.get(location.getChildId());
+                    UserEntity user = users.get(location.getUserId());
                     String name = user == null ? location.getName() : user.getName();
                     return toLocationResponse(location, name);
                 })
@@ -139,18 +142,22 @@ public class LocationController {
                 .map(ParentChildEntity::getParentId)
                 .toList();
 
+        // 같은 부모 계정에 속한 다른 자녀 및 부모 위치 포함
         parentIds.forEach(parentId -> parentChildRepository.findByParentId(parentId)
                 .forEach(relation -> childIds.add(relation.getChildId())));
+
+        // 부모 위치도 함께 조회
+        parentIds.forEach(childIds::add);
 
         Map<Long, UserEntity> children = userRepository.findAllById(childIds)
                 .stream()
                 .collect(Collectors.toMap(UserEntity::getId, child -> child));
 
-        return locationRepository.findLatestLocationsByChildIds(List.copyOf(childIds))
+        return locationRepository.findLatestLocationsByUserIds(List.copyOf(childIds))
                 .stream()
                 .filter(location -> isKakaoMapCoordinate(location.getLatitude(), location.getLongitude()))
                 .map(location -> {
-                    UserEntity child = children.get(location.getChildId());
+                    UserEntity child = children.get(location.getUserId());
                     String name = child == null ? location.getName() : child.getName();
                     return toLocationResponse(location, name);
                 })
@@ -159,7 +166,7 @@ public class LocationController {
 
     private LocationResponse toLocationResponse(LocationEntity location, String name) {
         return new LocationResponse(
-                location.getChildId(),
+                location.getUserId(),
                 name,
                 location.getLatitude(),
                 location.getLongitude()

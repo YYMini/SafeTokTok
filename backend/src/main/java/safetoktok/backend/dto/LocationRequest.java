@@ -1,16 +1,16 @@
 package safetoktok.backend.dto;
 
 public class LocationRequest {
-    private Long childId;
+    private Long userId;
     private Double latitude;
     private Double longitude;
 
-    public Long getChildId() {
-        return childId;
+    public Long getUserId() {
+        return userId;
     }
 
-    public void setChildId(Long childId) {
-        this.childId = childId;
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public Double getLatitude() {

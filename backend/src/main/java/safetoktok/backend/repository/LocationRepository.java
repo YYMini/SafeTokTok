@@ -2,6 +2,7 @@ package safetoktok.backend.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import safetoktok.backend.entity.LocationEntity;
 
 import java.util.List;
@@ -14,24 +15,24 @@ public interface LocationRepository extends JpaRepository<LocationEntity, Long> 
             where l.createdAt = (
                 select max(l2.createdAt)
                 from LocationEntity l2
-                where l2.childId = l.childId
+                where l2.userId = l.userId
             )
             """)
-    List<LocationEntity> findLatestLocationsByChild();
+    List<LocationEntity> findLatestLocationsByUser();
 
-    Optional<LocationEntity> findTopByChildIdOrderByCreatedAtDesc(Long childId);
+    Optional<LocationEntity> findTopByUserIdOrderByCreatedAtDesc(Long userId);
 
-    void deleteByChildId(Long childId);
+    void deleteByUserId(Long userId);
 
     @Query("""
             select l
             from LocationEntity l
-            where l.childId in :childIds
+            where l.userId in :userIds
               and l.createdAt = (
                 select max(l2.createdAt)
                 from LocationEntity l2
-                where l2.childId = l.childId
+                where l2.userId = l.userId
               )
             """)
-    List<LocationEntity> findLatestLocationsByChildIds(List<Long> childIds);
+    List<LocationEntity> findLatestLocationsByUserIds(@Param("userIds") List<Long> userIds);
 }

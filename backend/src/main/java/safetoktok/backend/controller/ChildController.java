@@ -95,9 +95,9 @@ public class ChildController {
             return List.of();
         }
 
-        Map<Long, LocationEntity> latestLocations = locationRepository.findLatestLocationsByChildIds(childIds)
+        Map<Long, LocationEntity> latestLocations = locationRepository.findLatestLocationsByUserIds(childIds)
                 .stream()
-                .collect(Collectors.toMap(LocationEntity::getChildId, Function.identity()));
+                .collect(Collectors.toMap(LocationEntity::getUserId, Function.identity()));
 
         return userRepository.findAllById(childIds)
                 .stream()
@@ -170,7 +170,7 @@ public class ChildController {
             throw new IllegalArgumentException("자녀 계정만 삭제할 수 있습니다.");
         }
 
-        locationRepository.deleteByChildId(childId);
+        locationRepository.deleteByUserId(childId);
         parentChildRepository.delete(relation);
         parentChildRepository.deleteByChildId(childId);
         userRepository.delete(child);

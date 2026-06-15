@@ -18,7 +18,7 @@ public class LocationEntity {
     private Long id;
 
     @Column(nullable = false)
-    private Long childId;
+    private Long userId;
 
     @Column(nullable = false, length = 50)
     private String name;
@@ -35,8 +35,8 @@ public class LocationEntity {
     protected LocationEntity() {
     }
 
-    public LocationEntity(Long childId, String name, Double latitude, Double longitude) {
-        this.childId = childId;
+    public LocationEntity(Long userId, String name, Double latitude, Double longitude) {
+        this.userId = userId;
         this.name = name;
         this.latitude = latitude;
         this.longitude = longitude;
@@ -53,8 +53,8 @@ public class LocationEntity {
         return id;
     }
 
-    public Long getChildId() {
-        return childId;
+    public Long getUserId() {
+        return userId;
     }
 
     public String getName() {

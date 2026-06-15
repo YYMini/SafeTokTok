@@ -1,7 +1,7 @@
 package safetoktok.backend.dto;
 
 public class LocationResponse {
-    private Long childId;
+    private Long userId;
     private String name;
     private Double latitude;
     private Double longitude;
@@ -9,19 +9,19 @@ public class LocationResponse {
     public LocationResponse() {
     }
 
-    public LocationResponse(Long childId, String name, Double latitude, Double longitude) {
-        this.childId = childId;
+    public LocationResponse(Long userId, String name, Double latitude, Double longitude) {
+        this.userId = userId;
         this.name = name;
         this.latitude = latitude;
         this.longitude = longitude;
     }
 
-    public Long getChildId() {
-        return childId;
+    public Long getUserId() {
+        return userId;
     }
 
-    public void setChildId(Long childId) {
-        this.childId = childId;
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public String getName() {
