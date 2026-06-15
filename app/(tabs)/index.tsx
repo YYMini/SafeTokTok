@@ -392,7 +392,10 @@ function MapPlaceholder({
   currentUserRole: string | null;
 }) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const roadviewContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
+  const roadviewRef = useRef<any>(null);
+  const roadviewClientRef = useRef<any>(null);
   const mobileWebViewRef = useRef<WebView>(null);
   const markersRef = useRef<any[]>([]);
   const overlaysRef = useRef<any[]>([]);
@@ -403,11 +406,14 @@ function MapPlaceholder({
   const latestUserIdRef = useRef<number | null>(currentUserId);
   const latestUserRoleRef = useRef<string | null>(currentUserRole);
   const latestTargetsRef = useRef<MapTarget[]>([]);
+  const selectedRoadviewTargetRef = useRef<MapTarget | null>(null);
   const hasRenderedMarkersRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [showRouteInfo, setShowRouteInfo] = useState(false);
   const [mapMode, setMapMode] = useState<"default" | "satellite" | "roadview">("default");
+  const [isRoadviewOpen, setIsRoadviewOpen] = useState(false);
+  const roadviewUnsupportedMessage = "해당 위치는 거리뷰를 지원하지 않습니다";
 
   const mobileMapHtml = `
     <!doctype html>
@@ -415,14 +421,38 @@ function MapPlaceholder({
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <style>
-          html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
+          html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+          #map {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+          }
+          #roadview {
+            display: none;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 30;
+            background: #d1d5db;
+          }
         </style>
         <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=d74e3a0d741775a29ef17516bf90fe89&autoload=false"></script>
       </head>
       <body>
         <div id="map"></div>
+        <div id="roadview"></div>
         <script>
           var map;
+          var roadview;
+          var roadviewClient;
+          var roadviewContainer;
+          var selectedRoadviewTarget = null;
+          var isRoadviewActive = false;
           var markers = [];
           var overlays = [];
           var currentTargets = [];
@@ -465,6 +495,60 @@ function MapPlaceholder({
               routeOverlay.setMap(null);
               routeOverlay = null;
             }
+          }
+
+          function postToApp(payload) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+          }
+
+          function getRoadviewPosition() {
+            if (selectedRoadviewTarget && isKakaoMapCoordinate(selectedRoadviewTarget.latitude, selectedRoadviewTarget.longitude)) {
+              return new kakao.maps.LatLng(selectedRoadviewTarget.latitude, selectedRoadviewTarget.longitude);
+            }
+            if (currentTargets.length > 0) {
+              var target = currentTargets[0];
+              return new kakao.maps.LatLng(target.latitude, target.longitude);
+            }
+            return map.getCenter();
+          }
+
+          function closeRoadview() {
+            isRoadviewActive = false;
+            if (roadviewContainer) {
+              roadviewContainer.style.display = 'none';
+            }
+            refreshMapTiles();
+            postToApp({ type: 'roadviewState', active: false });
+          }
+
+          function openRoadview() {
+            if (!map || !roadviewContainer) return;
+            var position = getRoadviewPosition();
+            if (!roadviewClient) {
+              roadviewClient = new kakao.maps.RoadviewClient();
+            }
+            roadviewClient.getNearestPanoId(position, 200, function(panoId) {
+              if (!panoId) {
+                closeRoadview();
+                postToApp({ type: 'roadviewError', message: '해당 위치는 거리뷰를 지원하지 않습니다' });
+                return;
+              }
+              roadviewContainer.style.display = 'block';
+              if (!roadview) {
+                roadview = new kakao.maps.Roadview(roadviewContainer);
+              }
+              roadview.relayout();
+              roadview.setPanoId(panoId, position);
+              setTimeout(function() { roadview.relayout(); }, 0);
+              setTimeout(function() { roadview.relayout(); }, 120);
+              isRoadviewActive = true;
+              postToApp({ type: 'roadviewState', active: true });
+            });
+          }
+
+          function toggleRoadview() {
+            if (isRoadviewActive) closeRoadview();
+            else openRoadview();
           }
 
           function drawRoute() {
@@ -539,6 +623,10 @@ function MapPlaceholder({
               drawRoute();
             } else if (payload.type === 'routeOff') {
               clearRoute();
+            } else if (payload.type === 'roadviewToggle') {
+              toggleRoadview();
+            } else if (payload.type === 'roadviewClose') {
+              closeRoadview();
             }
           }
 
@@ -570,6 +658,9 @@ function MapPlaceholder({
                 content: '<div style="background:white;border:1px solid #2563eb;border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:#2563eb;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
               });
               overlay.setMap(map);
+              kakao.maps.event.addListener(marker, 'click', function() {
+                selectedRoadviewTarget = target;
+              });
               markers.push(marker);
               overlays.push(overlay);
             });
@@ -594,11 +685,12 @@ function MapPlaceholder({
               center: new kakao.maps.LatLng(37.5665, 126.9780),
               level: 3
             });
+            roadviewContainer = document.getElementById('roadview');
             map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
             relayoutMap();
             setTimeout(relayoutMap, 100);
             setTimeout(relayoutMap, 500);
-            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+            postToApp({ type: 'ready' });
           });
 
           window.addEventListener('resize', relayoutMap);
@@ -728,6 +820,7 @@ function MapPlaceholder({
         });
 
         window.kakao.maps.event.addListener(marker, "click", () => {
+          selectedRoadviewTargetRef.current = group.targets[0];
           const isOpen = overlaysRef.current.includes(popup);
           overlaysRef.current
             .filter((item) => item.__groupPopup)
@@ -739,6 +832,10 @@ function MapPlaceholder({
             popup.setMap(mapInstanceRef.current);
             overlaysRef.current.push(popup);
           }
+        });
+      } else {
+        window.kakao.maps.event.addListener(marker, "click", () => {
+          selectedRoadviewTargetRef.current = group.targets[0];
         });
       }
 
@@ -771,6 +868,74 @@ function MapPlaceholder({
       routeOverlayRef.current.setMap(null);
       routeOverlayRef.current = null;
     }
+  };
+
+  const getWebRoadviewPosition = () => {
+    if (!window.kakao?.maps || !mapInstanceRef.current) return null;
+    const selectedTarget = selectedRoadviewTargetRef.current;
+    if (
+      selectedTarget &&
+      isKakaoMapCoordinate(selectedTarget.latitude, selectedTarget.longitude)
+    ) {
+      return new window.kakao.maps.LatLng(
+        selectedTarget.latitude,
+        selectedTarget.longitude,
+      );
+    }
+    const firstTarget = latestTargetsRef.current[0];
+    if (
+      firstTarget &&
+      isKakaoMapCoordinate(firstTarget.latitude, firstTarget.longitude)
+    ) {
+      return new window.kakao.maps.LatLng(
+        firstTarget.latitude,
+        firstTarget.longitude,
+      );
+    }
+    return mapInstanceRef.current.getCenter();
+  };
+
+  const closeWebRoadView = () => {
+    if (roadviewContainerRef.current) {
+      roadviewContainerRef.current.style.display = "none";
+    }
+    mapInstanceRef.current?.relayout?.();
+    setIsRoadviewOpen(false);
+  };
+
+  const openWebRoadView = () => {
+    if (
+      !window.kakao?.maps ||
+      !mapInstanceRef.current ||
+      !roadviewContainerRef.current
+    ) {
+      return;
+    }
+    if (!roadviewClientRef.current) {
+      roadviewClientRef.current = new window.kakao.maps.RoadviewClient();
+    }
+    const position = getWebRoadviewPosition();
+    if (!position) return;
+
+    roadviewClientRef.current.getNearestPanoId(position, 200, (panoId: number | null) => {
+      if (!panoId) {
+        closeWebRoadView();
+        setErrorText(roadviewUnsupportedMessage);
+        return;
+      }
+      setErrorText("");
+      roadviewContainerRef.current!.style.display = "block";
+      if (!roadviewRef.current) {
+        roadviewRef.current = new window.kakao.maps.Roadview(
+          roadviewContainerRef.current,
+        );
+      }
+      roadviewRef.current.relayout?.();
+      roadviewRef.current.setPanoId(panoId, position);
+      window.setTimeout(() => roadviewRef.current?.relayout?.(), 0);
+      window.setTimeout(() => roadviewRef.current?.relayout?.(), 120);
+      setIsRoadviewOpen(true);
+    });
   };
 
   const drawWebRoute = () => {
@@ -1023,6 +1188,14 @@ function MapPlaceholder({
   };
 
   const openSatelliteMode = () => {
+    if (isRoadviewOpen) {
+      if (Platform.OS === "web") {
+        closeWebRoadView();
+      } else {
+        sendMobileMapCommand("roadviewClose");
+        setIsRoadviewOpen(false);
+      }
+    }
     setMapMode("satellite");
     if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
       mapInstanceRef.current.setMapTypeId(window.kakao.maps.MapTypeId.SKYVIEW);
@@ -1032,10 +1205,36 @@ function MapPlaceholder({
   };
 
   const openRoadViewMode = () => {
-    setMapMode("roadview");
+    if (isRoadviewOpen) {
+      if (Platform.OS === "web") {
+        closeWebRoadView();
+      } else {
+        sendMobileMapCommand("roadviewClose");
+        setIsRoadviewOpen(false);
+      }
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      openWebRoadView();
+      return;
+    }
+
+    setErrorText("");
+    sendMobileMapCommand("roadviewToggle");
   };
 
   const closeModeScreen = () => {
+    if (isRoadviewOpen) {
+      if (Platform.OS === "web") {
+        closeWebRoadView();
+      } else {
+        sendMobileMapCommand("roadviewClose");
+        setIsRoadviewOpen(false);
+      }
+      return;
+    }
+
     setMapMode("default");
     if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
       mapInstanceRef.current.setMapTypeId(window.kakao.maps.MapTypeId.ROADMAP);
@@ -1224,6 +1423,9 @@ function MapPlaceholder({
         existingScript.removeEventListener("load", onLoad);
       }
       clearWebRoute();
+      if (roadviewContainerRef.current) {
+        roadviewContainerRef.current.style.display = "none";
+      }
       if (watchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
@@ -1294,6 +1496,18 @@ function MapPlaceholder({
               const payload = JSON.parse(event.nativeEvent.data);
               if (payload.type === "ready") {
                 fetchLatestLocations();
+              } else if (payload.type === "roadviewState") {
+                setIsRoadviewOpen(!!payload.active);
+                if (payload.active) {
+                  setErrorText("");
+                }
+              } else if (payload.type === "roadviewError") {
+                setIsRoadviewOpen(false);
+                setErrorText(
+                  typeof payload.message === "string"
+                    ? payload.message
+                    : roadviewUnsupportedMessage,
+                );
               }
             } catch {
               // ignore
@@ -1304,7 +1518,7 @@ function MapPlaceholder({
 
         <MapOverlayControls
           showRouteInfo={showRouteInfo}
-          mapMode={mapMode}
+          mapMode={isRoadviewOpen ? "roadview" : mapMode}
           onToggleRoute={toggleRoute}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
@@ -1362,10 +1576,23 @@ function MapPlaceholder({
       )}
 
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+      <div
+        ref={roadviewContainerRef}
+        style={{
+          display: "none",
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 10,
+          backgroundColor: "#D1D5DB",
+        }}
+      />
 
       <MapOverlayControls
         showRouteInfo={showRouteInfo}
-        mapMode={mapMode}
+        mapMode={isRoadviewOpen ? "roadview" : mapMode}
         onToggleRoute={toggleRoute}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
@@ -1431,8 +1658,6 @@ function MapOverlayControls({
   onOpenRoadViewMode: () => void;
   onCloseModeScreen: () => void;
 }) {
-  if (mapMode === "roadview") return null;
-
   return (
     <>
       <Pressable
@@ -1472,8 +1697,15 @@ function MapOverlayControls({
           />
         </Pressable>
 
-        <Pressable style={styles.rightBtn} onPress={onOpenRoadViewMode}>
-          <Ionicons name="walk-outline" size={21} color="#334155" />
+        <Pressable
+          style={[styles.rightBtn, mapMode === "roadview" && styles.rightBtnActive]}
+          onPress={onOpenRoadViewMode}
+        >
+          <Ionicons
+            name="walk-outline"
+            size={21}
+            color={mapMode === "roadview" ? COLORS.primary : "#334155"}
+          />
         </Pressable>
       </View>
     </>
