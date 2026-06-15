@@ -82,16 +82,7 @@ type MapTarget = {
   name: string;
   latitude: number;
   longitude: number;
-  isCurrentUser?: boolean;
 };
-
-const isKakaoMapCoordinate = (latitude: number, longitude: number) =>
-  Number.isFinite(latitude) &&
-  Number.isFinite(longitude) &&
-  latitude >= 33 &&
-  latitude <= 39.5 &&
-  longitude >= 124 &&
-  longitude <= 132;
 
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
@@ -398,8 +389,6 @@ function MapPlaceholder({
   const latestUserIdRef = useRef<number | null>(currentUserId);
   const latestUserRoleRef = useRef<string | null>(currentUserRole);
   const latestTargetsRef = useRef<MapTarget[]>([]);
-  const serverTargetsRef = useRef<MapTarget[]>([]);
-  const currentPositionRef = useRef<MapTarget | null>(null);
   const hasRenderedMarkersRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
@@ -425,15 +414,6 @@ function MapPlaceholder({
           var currentTargets = [];
           var routeLine = null;
           var routeOverlay = null;
-
-          function isKakaoMapCoordinate(latitude, longitude) {
-            return Number.isFinite(latitude) &&
-              Number.isFinite(longitude) &&
-              latitude >= 33 &&
-              latitude <= 39.5 &&
-              longitude >= 124 &&
-              longitude <= 132;
-          }
 
           function relayoutMap() {
             if (!map) return;
@@ -462,7 +442,7 @@ function MapPlaceholder({
             if (!map || !currentTargets.length) return;
             clearRoute();
             var start = map.getCenter();
-            var target = currentTargets.find(function(item) { return !item.isCurrentUser; }) || currentTargets[0];
+            var target = currentTargets[0];
             var end = new kakao.maps.LatLng(target.latitude, target.longitude);
             routeLine = new kakao.maps.Polyline({
               map: map,
@@ -506,7 +486,7 @@ function MapPlaceholder({
             if (payload.type === 'markers') {
               renderTargets(payload.targets);
             } else if (payload.type === 'moveTo') {
-              if (isKakaoMapCoordinate(payload.latitude, payload.longitude)) {
+              if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
                 relayoutMap();
                 map.setCenter(new kakao.maps.LatLng(payload.latitude, payload.longitude));
                 map.setLevel(3);
@@ -540,21 +520,18 @@ function MapPlaceholder({
           function renderTargets(targets) {
             if (!map || !Array.isArray(targets)) return;
             if (targets.length === 0 && markers.length > 0) return;
-            currentTargets = targets.filter(function(target) {
-              return isKakaoMapCoordinate(target.latitude, target.longitude);
-            });
+            currentTargets = targets;
             clearMarkers();
 
             relayoutMap();
 
             currentTargets.forEach(function(target) {
               var position = new kakao.maps.LatLng(target.latitude, target.longitude);
-              var color = target.isCurrentUser ? '#12B85C' : '#2563eb';
               var marker = new kakao.maps.Marker({ position: position, map: map });
               var overlay = new kakao.maps.CustomOverlay({
                 position: position,
                 yAnchor: 2.2,
-                content: '<div style="background:white;border:1px solid ' + color + ';border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:' + color + ';white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
+                content: '<div style="background:white;border:1px solid #2563eb;border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:#2563eb;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
               });
               overlay.setMap(map);
               markers.push(marker);
@@ -597,67 +574,13 @@ function MapPlaceholder({
   useEffect(() => {
     latestUserIdRef.current = currentUserId;
     latestUserRoleRef.current = currentUserRole;
-    currentPositionRef.current = null;
-    serverTargetsRef.current = [];
     latestTargetsRef.current = [];
     hasRenderedMarkersRef.current = false;
   }, [currentUserId, currentUserRole]);
 
-  const getDisplayTargets = (targets: MapTarget[] = serverTargetsRef.current) => {
-    const validTargets = targets.filter((target) =>
-      isKakaoMapCoordinate(target.latitude, target.longitude),
-    );
-    const currentPosition = currentPositionRef.current;
-    if (!currentPosition) {
-      return validTargets;
-    }
-
-    const filteredTargets = validTargets.filter(
-      (target) => target.childId !== currentPosition.childId,
-    );
-    return [...filteredTargets, currentPosition];
-  };
-
-  const renderDisplayTargets = (targets = getDisplayTargets()) => {
-    if (Platform.OS === "web") {
-      renderMarkers(targets);
-      if (showRouteInfo) {
-        setTimeout(drawWebRoute, 0);
-      }
-      return;
-    }
-
-    renderMobileMarkers(targets);
-    if (showRouteInfo) {
-      sendMobileMapCommand("routeOn");
-    }
-  };
-
-  const updateCurrentPosition = (latitude: number, longitude: number) => {
-    const userId = latestUserIdRef.current;
-    if (!userId) return;
-    if (!isKakaoMapCoordinate(latitude, longitude)) {
-      console.log("카카오맵 표시 범위 밖 현재 위치", { latitude, longitude });
-      return;
-    }
-
-    currentPositionRef.current = {
-      childId: userId,
-      name: "내 위치",
-      latitude,
-      longitude,
-      isCurrentUser: true,
-    };
-    renderDisplayTargets();
-    hasRenderedMarkersRef.current = true;
-  };
-
   const renderMarkers = (targets: MapTarget[]) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
-    const validTargets = targets.filter((target) =>
-      isKakaoMapCoordinate(target.latitude, target.longitude),
-    );
-    latestTargetsRef.current = validTargets;
+    latestTargetsRef.current = targets;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
@@ -683,7 +606,7 @@ function MapPlaceholder({
       }
     >();
 
-    validTargets.forEach((target) => {
+    targets.forEach((target) => {
       const key = `${target.latitude.toFixed(4)},${target.longitude.toFixed(4)}`;
       const group = groups.get(key);
       if (group) {
@@ -708,9 +631,6 @@ function MapPlaceholder({
         group.longitude,
       );
       const isGroup = group.targets.length > 1;
-      const markerColor = group.targets.some((target) => target.isCurrentUser)
-        ? "#12B85C"
-        : "#2563eb";
       const labelText = isGroup
         ? `${group.targets.length}명`
         : escapeHtml(group.targets[0].name);
@@ -722,12 +642,12 @@ function MapPlaceholder({
       const content = `
         <div style="
           background: white;
-          border: 1px solid ${markerColor};
+          border: 1px solid #2563eb;
           border-radius: 12px;
           padding: 4px 8px;
           font-size: 12px;
           font-weight: 600;
-          color: ${markerColor};
+          color: #2563eb;
           white-space: nowrap;
           box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         ">
@@ -816,9 +736,7 @@ function MapPlaceholder({
 
   const drawWebRoute = () => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
-    const target =
-      latestTargetsRef.current.find((item) => !item.isCurrentUser) ??
-      latestTargetsRef.current[0];
+    const target = latestTargetsRef.current[0];
     if (!target) return;
 
     clearWebRoute();
@@ -967,13 +885,19 @@ function MapPlaceholder({
 
       console.log("받은 latest 데이터", data);
 
-      if (Array.isArray(data)) {
-        serverTargetsRef.current = data;
-        const displayTargets = getDisplayTargets(serverTargetsRef.current);
-        renderDisplayTargets(displayTargets);
-        if (displayTargets.length > 0) {
-          hasRenderedMarkersRef.current = true;
+      if (Array.isArray(data) && data.length > 0) {
+        if (Platform.OS === "web") {
+          renderMarkers(data);
+          if (showRouteInfo) {
+            setTimeout(drawWebRoute, 0);
+          }
+        } else {
+          renderMobileMarkers(data);
+          if (showRouteInfo) {
+            sendMobileMapCommand("routeOn");
+          }
         }
+        hasRenderedMarkersRef.current = true;
         setIsReady(true);
       } else if (!hasRenderedMarkersRef.current) {
         setIsReady(true);
@@ -1003,27 +927,6 @@ function MapPlaceholder({
   };
 
   const fitMap = () => {
-    const currentPosition = currentPositionRef.current;
-    if (currentPosition) {
-      if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
-        mapInstanceRef.current.relayout?.();
-        mapInstanceRef.current.setCenter(
-          new window.kakao.maps.LatLng(
-            currentPosition.latitude,
-            currentPosition.longitude,
-          ),
-        );
-        mapInstanceRef.current.setLevel(3);
-        return;
-      }
-
-      sendMobileMapCommand("moveTo", {
-        latitude: currentPosition.latitude,
-        longitude: currentPosition.longitude,
-      });
-      return;
-    }
-
     if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
       const targets = latestTargetsRef.current;
       if (targets.length === 0) {
@@ -1110,6 +1013,11 @@ function MapPlaceholder({
         fetchLatestLocations();
       }, 3000);
 
+      if (currentUserRole !== "CHILD") {
+        setIsReady(true);
+        return;
+      }
+
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
         setErrorText("위치 권한이 필요합니다. 휴대폰 설정에서 위치 권한을 허용해주세요.");
@@ -1122,13 +1030,10 @@ function MapPlaceholder({
       });
       if (!isMounted) return;
 
-      updateCurrentPosition(current.coords.latitude, current.coords.longitude);
-      if (currentUserRole === "CHILD") {
-        await sendLocationToServer(
-          current.coords.latitude,
-          current.coords.longitude,
-        );
-      }
+      await sendLocationToServer(
+        current.coords.latitude,
+        current.coords.longitude,
+      );
       await fetchLatestLocations();
       setIsReady(true);
 
@@ -1139,13 +1044,10 @@ function MapPlaceholder({
           distanceInterval: 3,
         },
         (location) => {
-          updateCurrentPosition(location.coords.latitude, location.coords.longitude);
-          if (currentUserRole === "CHILD") {
-            sendLocationToServer(
-              location.coords.latitude,
-              location.coords.longitude,
-            );
-          }
+          sendLocationToServer(
+            location.coords.latitude,
+            location.coords.longitude,
+          );
         },
       );
     };
@@ -1187,7 +1089,6 @@ function MapPlaceholder({
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          updateCurrentPosition(latitude, longitude);
           if (
             latestUserRoleRef.current === "CHILD" &&
             latestUserIdRef.current
@@ -1207,26 +1108,25 @@ function MapPlaceholder({
         },
       );
 
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const { latitude, longitude } = pos.coords;
-          updateCurrentPosition(latitude, longitude);
-          if (
-            latestUserRoleRef.current === "CHILD" &&
-            latestUserIdRef.current
-          ) {
+      if (
+        latestUserRoleRef.current === "CHILD" &&
+        latestUserIdRef.current
+      ) {
+        watchIdRef.current = navigator.geolocation.watchPosition(
+          async (pos) => {
+            const { latitude, longitude } = pos.coords;
             await sendLocationToServer(latitude, longitude);
-          }
-        },
-        (err) => {
-          setErrorText(getGeolocationErrorMessage(err));
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 3000,
-        },
-      );
+          },
+          (err) => {
+            setErrorText(getGeolocationErrorMessage(err));
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 3000,
+          },
+        );
+      }
     };
 
     const initMap = () => {
