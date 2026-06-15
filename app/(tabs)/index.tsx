@@ -420,6 +420,12 @@ function MapPlaceholder({
             map.relayout();
           }
 
+          function refreshMapTiles() {
+            relayoutMap();
+            setTimeout(relayoutMap, 0);
+            setTimeout(relayoutMap, 120);
+          }
+
           function clearMarkers() {
             markers.forEach(function(marker) { marker.setMap(null); });
             overlays.forEach(function(overlay) { overlay.setMap(null); });
@@ -472,13 +478,15 @@ function MapPlaceholder({
             currentTargets.forEach(function(target) {
               bounds.extend(new kakao.maps.LatLng(target.latitude, target.longitude));
             });
-            relayoutMap();
+            refreshMapTiles();
             if (currentTargets.length === 1) {
-              map.setCenter(bounds.getSouthWest());
+              var target = currentTargets[0];
+              map.panTo(new kakao.maps.LatLng(target.latitude, target.longitude));
               map.setLevel(3);
             } else {
               map.setBounds(bounds);
             }
+            refreshMapTiles();
           }
 
           function handleCommand(payload) {
@@ -487,14 +495,17 @@ function MapPlaceholder({
               renderTargets(payload.targets);
             } else if (payload.type === 'moveTo') {
               if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
-                relayoutMap();
-                map.setCenter(new kakao.maps.LatLng(payload.latitude, payload.longitude));
+                refreshMapTiles();
+                map.panTo(new kakao.maps.LatLng(payload.latitude, payload.longitude));
                 map.setLevel(3);
+                refreshMapTiles();
               }
             } else if (payload.type === 'zoomIn') {
               map.setLevel(Math.max(1, map.getLevel() - 1));
+              refreshMapTiles();
             } else if (payload.type === 'zoomOut') {
               map.setLevel(Math.min(14, map.getLevel() + 1));
+              refreshMapTiles();
             } else if (payload.type === 'fit') {
               fitMarkers();
             } else if (payload.type === 'satellite') {
@@ -523,7 +534,7 @@ function MapPlaceholder({
             currentTargets = targets;
             clearMarkers();
 
-            relayoutMap();
+            refreshMapTiles();
 
             currentTargets.forEach(function(target) {
               var position = new kakao.maps.LatLng(target.latitude, target.longitude);
@@ -1043,11 +1054,14 @@ function MapPlaceholder({
           timeInterval: 3000,
           distanceInterval: 3,
         },
-        (location) => {
-          sendLocationToServer(
+        async (location) => {
+          const saved = await sendLocationToServer(
             location.coords.latitude,
             location.coords.longitude,
           );
+          if (saved) {
+            await fetchLatestLocations();
+          }
         },
       );
     };
@@ -1242,6 +1256,10 @@ function MapPlaceholder({
           javaScriptEnabled
           domStorageEnabled
           mixedContentMode="always"
+          androidLayerType="hardware"
+          cacheEnabled={false}
+          thirdPartyCookiesEnabled
+          geolocationEnabled
           onMessage={(event) => {
             try {
               const payload = JSON.parse(event.nativeEvent.data);
@@ -1620,6 +1638,7 @@ function ProfileModal({
   const [deletingChild, setDeletingChild] = useState(false);
 
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const childNameInputRef = useRef<TextInput>(null);
   const childNameValueRef = useRef("");
 
   const [editingName, setEditingName] = useState(false);
@@ -2120,6 +2139,11 @@ function ProfileModal({
     } finally {
       setAddingChild(false);
     }
+  };
+
+  const submitChildFromButton = () => {
+    childNameInputRef.current?.blur();
+    setTimeout(submitChild, 0);
   };
 
   const onSave = async () => {
@@ -2671,24 +2695,20 @@ function ProfileModal({
 
           <View style={styles.childModalBody}>
             <TextInput
+              ref={childNameInputRef}
               key={childModalOpen ? "child-name-open" : "child-name-closed"}
               defaultValue=""
-              onChangeText={(text) => {
-                childNameValueRef.current = text;
-                setChildError("");
+              onEndEditing={(event) => {
+                const nextName = event.nativeEvent.text;
+                childNameValueRef.current = nextName;
+                changeChildDraft("name", nextName);
               }}
-              onChange={(event) => {
-                childNameValueRef.current = event.nativeEvent.text;
-                setChildError("");
-              }}
-              onEndEditing={(event) =>
-                changeChildDraft("name", event.nativeEvent.text)
-              }
               placeholder="자녀 이름"
               placeholderTextColor="rgba(17,24,39,0.35)"
               style={styles.childInput}
-              keyboardType="default"
+              inputMode="text"
               returnKeyType="next"
+              showSoftInputOnFocus
               autoComplete="off"
               textContentType="none"
               importantForAutofill="no"
@@ -2741,7 +2761,7 @@ function ProfileModal({
 
             <Pressable
               style={[styles.childSaveBtn, addingChild && { opacity: 0.55 }]}
-              onPress={submitChild}
+              onPress={submitChildFromButton}
               disabled={addingChild}
             >
               <Text style={styles.childSaveBtnText}>
