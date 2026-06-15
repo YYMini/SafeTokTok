@@ -671,7 +671,7 @@ function MapPlaceholder({
 
   const sendLocationToServer = async (lat: number, lng: number) => {
     try {
-      if (!currentUserId || currentUserRole !== "CHILD") {
+      if (!currentUserId) {
         return false;
       }
 
@@ -773,11 +773,6 @@ function MapPlaceholder({
         fetchLatestLocations();
       }, 3000);
 
-      if (currentUserRole !== "CHILD") {
-        setIsReady(true);
-        return;
-      }
-
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
         setErrorText("위치 권한이 필요합니다. 휴대폰 설정에서 위치 권한을 허용해주세요.");
@@ -849,12 +844,7 @@ function MapPlaceholder({
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
-          if (
-            latestUserRoleRef.current === "CHILD" &&
-            latestUserIdRef.current
-          ) {
-            await sendLocationToServer(latitude, longitude);
-          }
+          await sendLocationToServer(latitude, longitude);
           await fetchLatestLocations();
           setIsReady(true);
         },
@@ -868,10 +858,7 @@ function MapPlaceholder({
         },
       );
 
-      if (
-        latestUserRoleRef.current === "CHILD" &&
-        latestUserIdRef.current
-      ) {
+      if (latestUserIdRef.current) {
         watchIdRef.current = navigator.geolocation.watchPosition(
           async (pos) => {
             const { latitude, longitude } = pos.coords;
@@ -2903,5 +2890,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
+
   btnGhostText: { color: "rgba(17,24,39,0.75)" },
 });
