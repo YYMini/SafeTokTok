@@ -47,17 +47,21 @@ public class LocationController {
             @RequestHeader(value = "X-User-Id", required = false) Long currentUserId,
             @RequestBody LocationRequest request
     ) {
-        Long userId = currentUserId != null ? currentUserId : request.getChildId();
-        if (userId == null) {
+        Long childId = currentUserId != null ? currentUserId : request.getChildId();
+        if (childId == null) {
             throw new IllegalArgumentException("로그인 사용자 정보를 찾을 수 없습니다.");
         }
 
-        UserEntity user = userRepository.findById(userId)
+        UserEntity child = userRepository.findById(childId)
                 .orElseThrow(() -> new IllegalArgumentException("위치를 저장할 사용자를 찾을 수 없습니다."));
 
+        if (child.getRole() != UserRole.CHILD) {
+            throw new IllegalArgumentException("자녀 계정만 위치를 저장할 수 있습니다.");
+        }
+
         LocationEntity location = new LocationEntity(
-                user.getId(),
-                user.getName(),
+                child.getId(),
+                child.getName(),
                 request.getLatitude(),
                 request.getLongitude()
         );
@@ -67,7 +71,7 @@ public class LocationController {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("message", "위치 저장 완료");
-        result.put("childId", user.getId());
+        result.put("childId", child.getId());
         result.put("latitude", request.getLatitude());
         result.put("longitude", request.getLongitude());
         return result;
@@ -99,19 +103,19 @@ public class LocationController {
                 .map(ParentChildEntity::getChildId)
                 .toList();
 
-        Set<Long> visibleUserIds = new LinkedHashSet<>();
-        visibleUserIds.add(parent.getId());
-        visibleUserIds.addAll(childIds);
+        if (childIds.isEmpty()) {
+            return List.of();
+        }
 
-        Map<Long, UserEntity> users = userRepository.findAllById(visibleUserIds)
+        Map<Long, UserEntity> children = userRepository.findAllById(childIds)
                 .stream()
                 .collect(Collectors.toMap(UserEntity::getId, child -> child));
 
-        return locationRepository.findLatestLocationsByChildIds(List.copyOf(visibleUserIds))
+        return locationRepository.findLatestLocationsByChildIds(childIds)
                 .stream()
                 .map(location -> {
-                    UserEntity user = users.get(location.getChildId());
-                    String name = user == null ? location.getName() : user.getName();
+                    UserEntity child = children.get(location.getChildId());
+                    String name = child == null ? location.getName() : child.getName();
                     return toLocationResponse(location, name);
                 })
                 .toList();
