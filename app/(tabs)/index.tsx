@@ -513,8 +513,6 @@ function MapPlaceholder({
             currentTargets = targets;
             clearMarkers();
 
-            var bounds = new kakao.maps.LatLngBounds();
-
             targets.forEach(function(target) {
               var position = new kakao.maps.LatLng(target.latitude, target.longitude);
               var marker = new kakao.maps.Marker({ position: position, map: map });
@@ -526,15 +524,7 @@ function MapPlaceholder({
               overlay.setMap(map);
               markers.push(marker);
               overlays.push(overlay);
-              bounds.extend(position);
             });
-
-            if (targets.length === 1) {
-              map.setCenter(bounds.getSouthWest());
-              map.setLevel(3);
-            } else if (targets.length > 1) {
-              map.setBounds(bounds);
-            }
           }
 
           document.addEventListener('message', function(event) {
