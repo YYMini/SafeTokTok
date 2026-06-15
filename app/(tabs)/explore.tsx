@@ -1,6 +1,6 @@
 // app/(tabs)/explore.tsx
 import Header from "@/components/Header";
-import { COLORS, SHADOW } from "@/constants/theme";
+import { COLORS } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,7 +9,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 type TabType = "location" | "bio";
-type BioTabType = "heart" | "motion" | "fall";
+type BioTabType = "heart" | "motion";
 
 type Profile = {
   name: string;
@@ -43,6 +43,7 @@ type BioAlert = {
   targetName: string;
   occurredAt: string;
   label: string;
+  address: string;
   value?: string;
   valueColor?: string;
 };
@@ -62,60 +63,26 @@ const DEFAULT_PROFILE: Profile = {
 
 const MOCK_LOCATION = {
   emergency: [
-    {
-      id: "e1",
-      targetName: "김민준",
-      occurredAt: "2025-11-11 14:32",
-      address: "서울시 강남구 역삼동",
-    },
-    {
-      id: "e2",
-      targetName: "이서윤",
-      occurredAt: "2025-11-10 18:45",
-      address: "서울시 서초구 방배동",
-    },
+    { id: "e1", targetName: "김민준", occurredAt: "2025-11-11 14:32", address: "서울시 강남구 역삼동" },
+    { id: "e2", targetName: "이서윤", occurredAt: "2025-11-10 18:45", address: "서울시 서초구 방배동" },
+    { id: "e3", targetName: "김민준", occurredAt: "2025-11-09 16:12", address: "서울시 강남구 삼성동" },
+    { id: "e4", targetName: "이서윤", occurredAt: "2025-11-08 11:20", address: "서울시 서초구 반포동" },
   ] as LocationAlert[],
   out: [
-    {
-      id: "o1",
-      targetName: "김민준",
-      occurredAt: "2025-11-11 12:15",
-      address: "안전구역에서 120m 이탈",
-      distance: 120,
-    },
-    {
-      id: "o2",
-      targetName: "이서윤",
-      occurredAt: "2025-11-09 15:10",
-      address: "안전구역에서 85m 이탈",
-      distance: 85,
-    },
+    { id: "o1", targetName: "김민준", occurredAt: "2025-11-11 12:15", address: "안전구역에서 120m 이탈", distance: 120 },
+    { id: "o2", targetName: "이서윤", occurredAt: "2025-11-09 15:10", address: "안전구역에서 85m 이탈", distance: 85 },
+    { id: "o3", targetName: "김민준", occurredAt: "2025-11-08 09:22", address: "안전구역에서 60m 이탈", distance: 60 },
   ] as LocationAlert[],
   back: [
-    {
-      id: "b1",
-      targetName: "김민준",
-      occurredAt: "2025-11-10 16:20",
-      address: "",
-    },
+    { id: "b1", targetName: "김민준", occurredAt: "2025-11-10 16:20", address: "안전구역으로 복귀" },
+    { id: "b2", targetName: "이서윤", occurredAt: "2025-11-09 16:02", address: "안전구역으로 복귀" },
+    { id: "b3", targetName: "김민준", occurredAt: "2025-11-08 10:01", address: "안전구역으로 복귀" },
   ] as LocationAlert[],
 };
 
 const MOCK_DEVICES: DeviceStatus[] = [
-  {
-    id: "d1",
-    deviceName: "Apple Watch SE",
-    targetName: "김민준",
-    connected: true,
-    battery: 75,
-  },
-  {
-    id: "d2",
-    deviceName: "Galaxy Watch",
-    targetName: "이서윤",
-    connected: false,
-    lastUpdatedAt: "2025-11-19 09:30",
-  },
+  { id: "d1", deviceName: "Galaxy Watch", targetName: "김민준", connected: true, battery: 75 },
+  { id: "d2", deviceName: "Galaxy Watch", targetName: "이서윤", connected: false, lastUpdatedAt: "2025-11-19 09:30" },
 ];
 
 const MOCK_BIO = {
@@ -125,6 +92,7 @@ const MOCK_BIO = {
       targetName: "김민준",
       occurredAt: "2025-11-11 14:30",
       label: "심박수 이상",
+      address: "현재 심박수 145 bpm",
       value: "145 bpm",
       valueColor: "#FF2F45",
     },
@@ -133,6 +101,7 @@ const MOCK_BIO = {
       targetName: "김민준",
       occurredAt: "2025-11-10 20:30",
       label: "심박수 낮음",
+      address: "현재 심박수 45 bpm",
       value: "45 bpm",
       valueColor: "#1267FF",
     },
@@ -143,18 +112,9 @@ const MOCK_BIO = {
       targetName: "이서윤",
       occurredAt: "2025-11-10 13:10",
       label: "움직임 없음",
+      address: "30분 이상 움직임 없음",
       value: "30분",
       valueColor: "#F59E0B",
-    },
-  ] as BioAlert[],
-  fall: [
-    {
-      id: "f1",
-      targetName: "김민준",
-      occurredAt: "2025-11-09 17:22",
-      label: "낙상 감지",
-      value: "",
-      valueColor: "#FF2F45",
     },
   ] as BioAlert[],
 };
@@ -166,16 +126,13 @@ export default function AlertScreen() {
   const [tab, setTab] = useState<TabType>("location");
   const [bioTab, setBioTab] = useState<BioTabType>("heart");
 
-  const [emergencyAlerts, setEmergencyAlerts] = useState<LocationAlert[]>(
-    MOCK_LOCATION.emergency
-  );
+  const [emergencyAlerts, setEmergencyAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.emergency);
   const [outAlerts, setOutAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.out);
   const [backAlerts, setBackAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.back);
 
   const [devices, setDevices] = useState<DeviceStatus[]>(MOCK_DEVICES);
   const [heartAlerts, setHeartAlerts] = useState<BioAlert[]>(MOCK_BIO.heart);
   const [motionAlerts, setMotionAlerts] = useState<BioAlert[]>(MOCK_BIO.motion);
-  const [fallAlerts, setFallAlerts] = useState<BioAlert[]>(MOCK_BIO.fall);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -203,9 +160,8 @@ export default function AlertScreen() {
   const loadRealtimeAlerts = useCallback(async () => {
     try {
       /**
-       * 백엔드 연동 시 이 부분만 실제 API에 맞춰 연결하면 됨.
+       * 백엔드 연동 시 실제 API로 교체.
        *
-       * 예시:
        * const response = await fetch(`${API_BASE_URL}/api/alerts`);
        * const data = await response.json();
        *
@@ -215,7 +171,6 @@ export default function AlertScreen() {
        * setDevices(data.bio.devices);
        * setHeartAlerts(data.bio.heart);
        * setMotionAlerts(data.bio.motion);
-       * setFallAlerts(data.bio.fall);
        */
     } catch {
       // 서버 연결 전에는 목업값 유지
@@ -231,9 +186,8 @@ export default function AlertScreen() {
 
   const activeBioAlerts = useMemo(() => {
     if (bioTab === "heart") return heartAlerts;
-    if (bioTab === "motion") return motionAlerts;
-    return fallAlerts;
-  }, [bioTab, heartAlerts, motionAlerts, fallAlerts]);
+    return motionAlerts;
+  }, [bioTab, heartAlerts, motionAlerts]);
 
   return (
     <View style={styles.safe}>
@@ -246,21 +200,14 @@ export default function AlertScreen() {
         />
       </View>
 
-      <LinearGradient
-        colors={[COLORS.bgTop ?? "#F5F9FF", COLORS.bgBottom ?? "#FFFFFF"]}
-        style={styles.screen}
-      >
+      <LinearGradient colors={["#F2F7FF", "#FFFFFF"]} style={styles.screen}>
         <View style={styles.tabBar}>
           <Pressable
             style={[styles.mainTab, tab === "location" && styles.mainTabOn]}
             onPress={() => setTab("location")}
           >
             <View style={styles.mainTabInner}>
-              <Ionicons
-                name="location-outline"
-                size={18}
-                color={tab === "location" ? "#1267FF" : "#64748B"}
-              />
+              <Ionicons name="location-outline" size={18} color={tab === "location" ? "#1267FF" : "#64748B"} />
               <Text style={[styles.mainTabText, tab === "location" && styles.mainTabTextOn]}>
                 위치 추적
               </Text>
@@ -272,11 +219,7 @@ export default function AlertScreen() {
             onPress={() => setTab("bio")}
           >
             <View style={styles.mainTabInner}>
-              <Ionicons
-                name="heart-outline"
-                size={18}
-                color={tab === "bio" ? "#1267FF" : "#64748B"}
-              />
+              <Ionicons name="heart-outline" size={18} color={tab === "bio" ? "#1267FF" : "#64748B"} />
               <Text style={[styles.mainTabText, tab === "bio" && styles.mainTabTextOn]}>
                 생체 정보
               </Text>
@@ -286,56 +229,35 @@ export default function AlertScreen() {
 
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
           {tab === "location" ? (
-            <>
-              <AlertSection
-                icon="warning-outline"
-                title={`긴급 요청 (${emergencyAlerts.length})`}
+            <View style={styles.locationGroup}>
+              <LocationGroupCard
+                type="emergency"
+                title="긴급 요청"
+                alerts={emergencyAlerts}
                 color="#FF2F45"
-              >
-                {emergencyAlerts.map((item) => (
-                  <LocationAlertCard
-                    key={item.id}
-                    type="emergency"
-                    label="긴급 요청"
-                    item={item}
-                  />
-                ))}
-              </AlertSection>
+                badgeLabel="긴급"
+              />
 
-              <AlertSection
-                icon="location-outline"
-                title={`안전구역 이탈 (${outAlerts.length})`}
+              <LocationGroupCard
+                type="out"
+                title="안전구역 이탈"
+                alerts={outAlerts}
                 color="#FF6B00"
-              >
-                {outAlerts.map((item) => (
-                  <LocationAlertCard
-                    key={item.id}
-                    type="out"
-                    label="안전구역 이탈"
-                    item={item}
-                  />
-                ))}
-              </AlertSection>
+                badgeLabel="이탈"
+              />
 
-              <AlertSection
-                icon="checkmark-circle-outline"
-                title={`안전구역 복귀 (${backAlerts.length})`}
+              <LocationGroupCard
+                type="back"
+                title="안전구역 복귀"
+                alerts={backAlerts}
                 color="#00C853"
-              >
-                {backAlerts.map((item) => (
-                  <LocationAlertCard
-                    key={item.id}
-                    type="back"
-                    label="안전구역 복귀"
-                    item={item}
-                  />
-                ))}
-              </AlertSection>
-            </>
+                badgeLabel="안전구역"
+              />
+            </View>
           ) : (
             <>
               <View style={styles.deviceTitleRow}>
-                <Ionicons name="wifi-outline" size={15} color="#1267FF" />
+                <Ionicons name="watch-outline" size={15} color="#1267FF" />
                 <Text style={styles.deviceTitle}>웨어러블 기기 상태</Text>
               </View>
 
@@ -359,49 +281,71 @@ export default function AlertScreen() {
                     color="#F59E0B"
                     onPress={() => setBioTab("motion")}
                   />
-                  <BioTab
-                    active={bioTab === "fall"}
-                    icon="warning-outline"
-                    label={`낙상 감지 (${fallAlerts.length})`}
-                    color="#FF2F45"
-                    onPress={() => setBioTab("fall")}
-                  />
                 </View>
 
-                <View style={styles.bioList}>
-                  {activeBioAlerts.map((item) => (
-                    <BioAlertCard key={item.id} item={item} bioTab={bioTab} />
-                  ))}
+                <View style={styles.bioListCard}>
+                  <ScrollView
+                    style={styles.bioListScroll}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={activeBioAlerts.length > 2}
+                    contentContainerStyle={styles.locationListContent}
+                  >
+                    {activeBioAlerts.map((item) => (
+                      <BioAlertCard key={item.id} item={item} bioTab={bioTab} />
+                    ))}
+                  </ScrollView>
                 </View>
               </View>
             </>
           )}
 
-          <View style={{ height: 42 }} />
+          <View style={{ height: 44 }} />
         </ScrollView>
       </LinearGradient>
     </View>
   );
 }
 
-function AlertSection({
-  icon,
+function LocationGroupCard({
+  type,
   title,
+  alerts,
   color,
-  children,
+  badgeLabel,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
+  type: "emergency" | "out" | "back";
   title: string;
+  alerts: LocationAlert[];
   color: string;
-  children: React.ReactNode;
+  badgeLabel: string;
 }) {
   return (
-    <View style={styles.alertSection}>
-      <View style={styles.sectionTitleRow}>
-        <Ionicons name={icon} size={16} color={color} />
-        <Text style={styles.alertSectionTitle}>{title}</Text>
+    <View style={styles.locationBlock}>
+      <View style={styles.locationBlockHeader}>
+        <View style={styles.locationBlockTitleRow}>
+          <Text style={styles.locationBlockTitle}>{title}</Text>
+        </View>
+
+        <Text style={styles.totalCountText}>총 {alerts.length}건</Text>
       </View>
-      <View style={styles.alertList}>{children}</View>
+
+      <View style={[styles.locationListCard, { borderColor: `${color}55` }]}>
+        <ScrollView
+          style={styles.locationListScroll}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={alerts.length > 2}
+          contentContainerStyle={styles.locationListContent}
+        >
+          {alerts.map((item) => (
+            <LocationAlertCard
+              key={item.id}
+              type={type}
+              label={badgeLabel}
+              item={item}
+            />
+          ))}
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -418,33 +362,25 @@ function LocationAlertCard({
   const isEmergency = type === "emergency";
   const isOut = type === "out";
   const color = isEmergency ? "#FF2F45" : isOut ? "#FF6B00" : "#00C853";
-  const bg = isEmergency ? "#FFF1F2" : isOut ? "#FFF8ED" : "#ECFDF3";
-  const border = isEmergency ? "#FFB4BC" : isOut ? "#FDBA74" : "#86EFAC";
-  const icon = isEmergency
-    ? "warning-outline"
-    : isOut
-      ? "location-outline"
-      : "checkmark-outline";
+  const bg = isEmergency ? "#FFF8F9" : isOut ? "#FFFBF5" : "#F4FDF7";
 
   return (
-    <View style={[styles.locationCard, { backgroundColor: bg, borderColor: border }]}>
-      <View style={styles.cardIconCircle}>
-        <Ionicons name={icon} size={20} color={color} />
+    <View style={[styles.alertRow, { backgroundColor: bg }]}>
+      <View style={[styles.alertTypeBadge, { backgroundColor: color }]}>
+        <Text style={styles.alertTypeBadgeText}>{label}</Text>
       </View>
 
       <View style={styles.alertContent}>
-        <View style={styles.badgeRow}>
-          <View style={[styles.statusBadge, { backgroundColor: color }]}>
-            <Text style={styles.statusBadgeText}>{label}</Text>
-          </View>
+        <View style={styles.alertTopLine}>
+          <Text style={styles.alertName} numberOfLines={1}>
+            {item.targetName}
+          </Text>
+
           <Text style={styles.alertTime} numberOfLines={1}>
             {item.occurredAt}
           </Text>
         </View>
 
-        <Text style={styles.alertName} numberOfLines={1}>
-          {item.targetName}
-        </Text>
         {!!item.address && (
           <Text style={styles.alertDesc} numberOfLines={1}>
             {item.address}
@@ -457,10 +393,10 @@ function LocationAlertCard({
 
 function DeviceCard({ device }: { device: DeviceStatus }) {
   return (
-    <View style={styles.deviceCard}>
+    <View style={[styles.deviceCard, styles.lightShadow]}>
       <View style={[styles.deviceIconCircle, !device.connected && styles.deviceIconOff]}>
         <Ionicons
-          name={device.connected ? "wifi" : "wifi-outline"}
+          name="watch-outline"
           size={20}
           color={device.connected ? "#00C853" : "#94A3B8"}
         />
@@ -508,7 +444,7 @@ function BioTab({
         styles.bioTab,
         active && {
           borderBottomColor: color,
-          backgroundColor: color === "#F59E0B" ? "#FFFBEB" : "#FFF1F2",
+          backgroundColor: color === "#F59E0B" ? "#FFFBEB" : "#FFF7F8",
         },
       ]}
       onPress={onPress}
@@ -530,43 +466,30 @@ function BioAlertCard({
   item: BioAlert;
   bioTab: BioTabType;
 }) {
-  const icon =
-    bioTab === "heart"
-      ? "heart-outline"
-      : bioTab === "motion"
-        ? "time-outline"
-        : "warning-outline";
-
-  const badgeColor =
-    bioTab === "heart" || bioTab === "fall" ? "#FF2F45" : "#F59E0B";
-
-  const borderColor = bioTab === "motion" ? "#FCD34D" : "#FFB4BC";
-  const bg = bioTab === "motion" ? "#FFFBEB" : "#FFF1F2";
+  const badgeColor = bioTab === "heart" ? "#FF2F45" : "#F59E0B";
+  const bg = bioTab === "heart" ? "#FFF8F9" : "#FFFBEB";
 
   return (
-    <View style={[styles.bioAlertCard, { borderColor, backgroundColor: bg }]}>
-      <View style={styles.bioInnerIconCircle}>
-        <Ionicons name={icon} size={20} color={badgeColor} />
+    <View style={[styles.alertRow, { backgroundColor: bg }]}>
+      <View style={[styles.alertTypeBadge, { backgroundColor: badgeColor }]}>
+        <Text style={styles.alertTypeBadgeText}>
+          {bioTab === "heart" ? "심박" : "움직임"}
+        </Text>
       </View>
 
       <View style={styles.alertContent}>
-        <View style={styles.badgeRow}>
-          <View style={[styles.statusBadge, { backgroundColor: badgeColor }]}>
-            <Text style={styles.statusBadgeText}>{item.label}</Text>
-          </View>
+        <View style={styles.alertTopLine}>
+          <Text style={styles.alertName} numberOfLines={1}>
+            {item.targetName}
+          </Text>
+
           <Text style={styles.alertTime} numberOfLines={1}>
             {item.occurredAt}
           </Text>
         </View>
 
-        <Text style={styles.alertName} numberOfLines={1}>
-          {item.targetName}
-        </Text>
         <Text style={styles.alertDesc} numberOfLines={1}>
-          {item.label}{" "}
-          {!!item.value && (
-            <Text style={{ color: item.valueColor ?? badgeColor }}>{item.value}</Text>
-          )}
+          {item.address}
         </Text>
       </View>
     </View>
@@ -585,13 +508,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
+  lightShadow: {
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+
   tabBar: {
     height: 50,
     backgroundColor: "#FFFFFF",
     flexDirection: "row",
     borderBottomWidth: 1,
     borderBottomColor: "#D8E7FF",
-    ...SHADOW.soft,
   },
   mainTab: {
     flex: 1,
@@ -621,96 +551,115 @@ const styles = StyleSheet.create({
 
   body: {
     paddingHorizontal: 12,
-    paddingTop: 14,
-    paddingBottom: 26,
+    paddingTop: 20,
+    paddingBottom: 28,
   },
 
-  alertSection: {
-    marginBottom: 20,
+  locationGroup: {
+    gap: 18,
   },
-  sectionTitleRow: {
+  locationBlock: {
+    width: "100%",
+  },
+  locationBlockHeader: {
+    minHeight: 32,
+    marginBottom: 9,
+    paddingHorizontal: 2,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginBottom: 10,
-    paddingLeft: 1,
+    justifyContent: "space-between",
   },
-  alertSectionTitle: {
+  locationBlockTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  locationBlockTitle: {
     fontSize: 15,
-    fontWeight: "800",
-    color: "#475569",
+    fontWeight: "900",
+    color: "#334155",
   },
-  alertList: {
-    gap: 9,
+  totalCountText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#64748B",
   },
 
-  locationCard: {
-    minHeight: 82,
-    borderRadius: 15,
+  locationListCard: {
+    height: 136,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
     borderWidth: 1.2,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
+    padding: 9,
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 9,
+    elevation: 2,
+  },
+  locationListScroll: {
+    flex: 1,
+  },
+  locationListContent: {
+    gap: 8,
+    paddingRight: 2,
+  },
+
+  alertRow: {
+    height: 55,
+    borderRadius: 14,
+    paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
-    ...SHADOW.soft,
   },
-  cardIconCircle: {
-    width: 41,
-    height: 41,
-    borderRadius: 21,
-    backgroundColor: "#FFFFFF",
+  alertTypeBadge: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 11,
-    ...SHADOW.soft,
+    marginRight: 9,
+  },
+  alertTypeBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "900",
   },
   alertContent: {
     flex: 1,
     minWidth: 0,
   },
-  badgeRow: {
+  alertTopLine: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 5,
-    gap: 7,
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 4,
   },
-  statusBadge: {
-    height: 21,
-    borderRadius: 11,
-    paddingHorizontal: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statusBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 11,
+  alertName: {
+    fontSize: 14,
     fontWeight: "900",
-    textAlign: "center",
+    color: "#111827",
+    flexShrink: 0,
   },
   alertTime: {
-    fontSize: 11,
+    fontSize: 10,
     color: "#64748B",
     fontWeight: "700",
     flexShrink: 1,
-  },
-  alertName: {
-    fontSize: 17,
-    fontWeight: "500",
-    color: "#111827",
-    marginBottom: 4,
+    textAlign: "right",
   },
   alertDesc: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#334155",
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
   },
 
   deviceTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 10,
-    paddingLeft: 1,
+    marginBottom: 11,
+    paddingLeft: 2,
   },
   deviceTitle: {
     fontSize: 15,
@@ -727,7 +676,6 @@ const styles = StyleSheet.create({
     marginBottom: 11,
     flexDirection: "row",
     alignItems: "center",
-    ...SHADOW.soft,
   },
   deviceIconCircle: {
     width: 41,
@@ -776,13 +724,17 @@ const styles = StyleSheet.create({
   },
 
   bioPanel: {
-    marginTop: 13,
+    marginTop: 14,
     backgroundColor: "#FFFFFF",
     borderRadius: 15,
     borderWidth: 1,
     borderColor: "#BFDBFE",
     overflow: "hidden",
-    ...SHADOW.soft,
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   bioTabs: {
     height: 44,
@@ -811,27 +763,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     flexShrink: 1,
   },
-  bioList: {
-    paddingHorizontal: 13,
-    paddingVertical: 13,
-    gap: 9,
-  },
-  bioAlertCard: {
-    minHeight: 82,
-    borderRadius: 15,
-    borderWidth: 1.2,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  bioInnerIconCircle: {
-    width: 41,
-    height: 41,
-    borderRadius: 21,
+  bioListCard: {
+    height: 136,
     backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 11,
+    padding: 9,
+  },
+  bioListScroll: {
+    flex: 1,
   },
 });
