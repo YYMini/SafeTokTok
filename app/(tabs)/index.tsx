@@ -375,13 +375,25 @@ function MapPlaceholder({
   const mobileWebViewRef = useRef<WebView>(null);
   const markersRef = useRef<any[]>([]);
   const overlaysRef = useRef<any[]>([]);
+  const routeLineRef = useRef<any>(null);
+  const routeOverlayRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<number | null>(null);
   const latestUserIdRef = useRef<number | null>(currentUserId);
   const latestUserRoleRef = useRef<string | null>(currentUserRole);
+  const latestTargetsRef = useRef<
+    {
+      childId: number;
+      name: string;
+      latitude: number;
+      longitude: number;
+    }[]
+  >([]);
   const hasRenderedMarkersRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
+  const [showRouteInfo, setShowRouteInfo] = useState(false);
+  const [mapMode, setMapMode] = useState<"default" | "satellite" | "roadview">("default");
 
   const mobileMapHtml = `
     <!doctype html>
@@ -399,12 +411,91 @@ function MapPlaceholder({
           var map;
           var markers = [];
           var overlays = [];
+          var currentTargets = [];
+          var routeLine = null;
+          var routeOverlay = null;
 
           function clearMarkers() {
             markers.forEach(function(marker) { marker.setMap(null); });
             overlays.forEach(function(overlay) { overlay.setMap(null); });
             markers = [];
             overlays = [];
+          }
+
+          function clearRoute() {
+            if (routeLine) {
+              routeLine.setMap(null);
+              routeLine = null;
+            }
+            if (routeOverlay) {
+              routeOverlay.setMap(null);
+              routeOverlay = null;
+            }
+          }
+
+          function drawRoute() {
+            if (!map || !currentTargets.length) return;
+            clearRoute();
+            var start = map.getCenter();
+            var target = currentTargets[0];
+            var end = new kakao.maps.LatLng(target.latitude, target.longitude);
+            routeLine = new kakao.maps.Polyline({
+              map: map,
+              path: [start, end],
+              strokeWeight: 5,
+              strokeColor: '#2563eb',
+              strokeOpacity: 0.88,
+              strokeStyle: 'solid'
+            });
+            routeOverlay = new kakao.maps.CustomOverlay({
+              map: map,
+              position: new kakao.maps.LatLng(
+                (start.getLat() + end.getLat()) / 2,
+                (start.getLng() + end.getLng()) / 2
+              ),
+              yAnchor: 1.1,
+              content: '<div style="background:white;border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:800;color:#2563eb;box-shadow:0 4px 12px rgba(15,23,42,0.18);white-space:nowrap;">길찾기</div>'
+            });
+          }
+
+          function fitMarkers() {
+            if (!map) return;
+            if (!currentTargets.length) {
+              map.setCenter(new kakao.maps.LatLng(37.5665, 126.9780));
+              map.setLevel(3);
+              return;
+            }
+            var bounds = new kakao.maps.LatLngBounds();
+            currentTargets.forEach(function(target) {
+              bounds.extend(new kakao.maps.LatLng(target.latitude, target.longitude));
+            });
+            if (currentTargets.length === 1) {
+              map.setCenter(bounds.getSouthWest());
+              map.setLevel(3);
+            } else {
+              map.setBounds(bounds);
+            }
+          }
+
+          function handleCommand(payload) {
+            if (!map || !payload) return;
+            if (payload.type === 'markers') {
+              renderTargets(payload.targets);
+            } else if (payload.type === 'zoomIn') {
+              map.setLevel(Math.max(1, map.getLevel() - 1));
+            } else if (payload.type === 'zoomOut') {
+              map.setLevel(Math.min(14, map.getLevel() + 1));
+            } else if (payload.type === 'fit') {
+              fitMarkers();
+            } else if (payload.type === 'satellite') {
+              map.setMapTypeId(kakao.maps.MapTypeId.SKYVIEW);
+            } else if (payload.type === 'default') {
+              map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
+            } else if (payload.type === 'routeOn') {
+              drawRoute();
+            } else if (payload.type === 'routeOff') {
+              clearRoute();
+            }
           }
 
           function escapeHtml(value) {
@@ -419,6 +510,7 @@ function MapPlaceholder({
           function renderTargets(targets) {
             if (!map || !Array.isArray(targets)) return;
             if (targets.length === 0 && markers.length > 0) return;
+            currentTargets = targets;
             clearMarkers();
 
             var bounds = new kakao.maps.LatLngBounds();
@@ -448,14 +540,14 @@ function MapPlaceholder({
           document.addEventListener('message', function(event) {
             try {
               var payload = JSON.parse(event.data);
-              if (payload.type === 'markers') renderTargets(payload.targets);
+              handleCommand(payload);
             } catch (e) {}
           });
 
           window.addEventListener('message', function(event) {
             try {
               var payload = JSON.parse(event.data);
-              if (payload.type === 'markers') renderTargets(payload.targets);
+              handleCommand(payload);
             } catch (e) {}
           });
 
@@ -485,6 +577,7 @@ function MapPlaceholder({
     }[],
   ) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
+    latestTargetsRef.current = targets;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
@@ -619,12 +712,73 @@ function MapPlaceholder({
       longitude: number;
     }[],
   ) => {
+    latestTargetsRef.current = targets;
     mobileWebViewRef.current?.postMessage(
       JSON.stringify({
         type: "markers",
         targets,
       }),
     );
+  };
+
+  const sendMobileMapCommand = (type: string) => {
+    mobileWebViewRef.current?.postMessage(JSON.stringify({ type }));
+  };
+
+  const clearWebRoute = () => {
+    if (routeLineRef.current) {
+      routeLineRef.current.setMap(null);
+      routeLineRef.current = null;
+    }
+
+    if (routeOverlayRef.current) {
+      routeOverlayRef.current.setMap(null);
+      routeOverlayRef.current = null;
+    }
+  };
+
+  const drawWebRoute = () => {
+    if (!window.kakao?.maps || !mapInstanceRef.current) return;
+    const target = latestTargetsRef.current[0];
+    if (!target) return;
+
+    clearWebRoute();
+
+    const start = mapInstanceRef.current.getCenter();
+    const end = new window.kakao.maps.LatLng(target.latitude, target.longitude);
+
+    routeLineRef.current = new window.kakao.maps.Polyline({
+      map: mapInstanceRef.current,
+      path: [start, end],
+      strokeWeight: 5,
+      strokeColor: "#2563EB",
+      strokeOpacity: 0.88,
+      strokeStyle: "solid",
+    });
+
+    const infoPosition = new window.kakao.maps.LatLng(
+      (start.getLat() + target.latitude) / 2,
+      (start.getLng() + target.longitude) / 2,
+    );
+
+    routeOverlayRef.current = new window.kakao.maps.CustomOverlay({
+      position: infoPosition,
+      content: `
+        <div style="
+          background:#ffffff;
+          border:1px solid rgba(37,99,235,0.25);
+          border-radius:10px;
+          padding:7px 10px;
+          box-shadow:0 4px 12px rgba(15,23,42,0.18);
+          font-size:12px;
+          color:#2563eb;
+          font-weight:800;
+          white-space:nowrap;
+        ">길찾기</div>
+      `,
+      yAnchor: 1.1,
+    });
+    routeOverlayRef.current.setMap(mapInstanceRef.current);
   };
   const getChildIdFromUrl = () => {
     if (Platform.OS !== "web") return 1;
@@ -737,8 +891,14 @@ function MapPlaceholder({
       if (Array.isArray(data) && data.length > 0) {
         if (Platform.OS === "web") {
           renderMarkers(data);
+          if (showRouteInfo) {
+            setTimeout(drawWebRoute, 0);
+          }
         } else {
           renderMobileMarkers(data);
+          if (showRouteInfo) {
+            sendMobileMapCommand("routeOn");
+          }
         }
         hasRenderedMarkersRef.current = true;
         setIsReady(true);
@@ -749,6 +909,87 @@ function MapPlaceholder({
       console.log("최신 위치 조회 실패", error);
       setErrorText(`최신 위치 조회 실패: ${getApiAddressHint()}`);
     }
+  };
+
+  const zoomIn = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current) {
+      mapInstanceRef.current.setLevel(Math.max(1, mapInstanceRef.current.getLevel() - 1));
+      return;
+    }
+
+    sendMobileMapCommand("zoomIn");
+  };
+
+  const zoomOut = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current) {
+      mapInstanceRef.current.setLevel(Math.min(14, mapInstanceRef.current.getLevel() + 1));
+      return;
+    }
+
+    sendMobileMapCommand("zoomOut");
+  };
+
+  const fitMap = () => {
+    if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
+      const targets = latestTargetsRef.current;
+      if (targets.length === 0) {
+        mapInstanceRef.current.setCenter(new window.kakao.maps.LatLng(37.5665, 126.978));
+        mapInstanceRef.current.setLevel(3);
+        return;
+      }
+
+      const bounds = new window.kakao.maps.LatLngBounds();
+      targets.forEach((target) => {
+        bounds.extend(new window.kakao.maps.LatLng(target.latitude, target.longitude));
+      });
+
+      if (targets.length === 1) {
+        mapInstanceRef.current.setCenter(bounds.getSouthWest());
+        mapInstanceRef.current.setLevel(3);
+      } else {
+        mapInstanceRef.current.setBounds(bounds);
+      }
+      return;
+    }
+
+    sendMobileMapCommand("fit");
+  };
+
+  const toggleRoute = () => {
+    setShowRouteInfo((prev) => {
+      const next = !prev;
+      if (Platform.OS === "web") {
+        setTimeout(() => {
+          if (next) drawWebRoute();
+          else clearWebRoute();
+        }, 0);
+      } else {
+        sendMobileMapCommand(next ? "routeOn" : "routeOff");
+      }
+      return next;
+    });
+  };
+
+  const openSatelliteMode = () => {
+    setMapMode("satellite");
+    if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
+      mapInstanceRef.current.setMapTypeId(window.kakao.maps.MapTypeId.SKYVIEW);
+      return;
+    }
+    sendMobileMapCommand("satellite");
+  };
+
+  const openRoadViewMode = () => {
+    setMapMode("roadview");
+  };
+
+  const closeModeScreen = () => {
+    setMapMode("default");
+    if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
+      mapInstanceRef.current.setMapTypeId(window.kakao.maps.MapTypeId.ROADMAP);
+      return;
+    }
+    sendMobileMapCommand("default");
   };
 
   useEffect(() => {
@@ -937,6 +1178,7 @@ function MapPlaceholder({
       if (existingScript) {
         existingScript.removeEventListener("load", onLoad);
       }
+      clearWebRoute();
       if (watchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
@@ -947,6 +1189,17 @@ function MapPlaceholder({
   }, [currentUserId, currentUserRole]);
 
   if (Platform.OS !== "web") {
+    if (mapMode === "roadview") {
+      return (
+        <MapModeScreen
+          type="roadview"
+          title="거리뷰 모드"
+          description="주변 도로와 이동 경로를 거리뷰로 확인하고 있습니다."
+          onBack={closeModeScreen}
+        />
+      );
+    }
+
     return (
       <View style={styles.map}>
         {!isReady && !errorText && (
@@ -999,7 +1252,30 @@ function MapPlaceholder({
           }}
           style={{ flex: 1, backgroundColor: "#DCEEFF" }}
         />
+
+        <MapOverlayControls
+          showRouteInfo={showRouteInfo}
+          mapMode={mapMode}
+          onToggleRoute={toggleRoute}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onFit={fitMap}
+          onOpenSatelliteMode={openSatelliteMode}
+          onOpenRoadViewMode={openRoadViewMode}
+          onCloseModeScreen={closeModeScreen}
+        />
       </View>
+    );
+  }
+
+  if (mapMode === "roadview") {
+    return (
+      <MapModeScreen
+        type="roadview"
+        title="거리뷰 모드"
+        description="주변 도로와 이동 경로를 거리뷰로 확인하고 있습니다."
+        onBack={closeModeScreen}
+      />
     );
   }
 
@@ -1037,7 +1313,125 @@ function MapPlaceholder({
       )}
 
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+
+      <MapOverlayControls
+        showRouteInfo={showRouteInfo}
+        mapMode={mapMode}
+        onToggleRoute={toggleRoute}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onFit={fitMap}
+        onOpenSatelliteMode={openSatelliteMode}
+        onOpenRoadViewMode={openRoadViewMode}
+        onCloseModeScreen={closeModeScreen}
+      />
     </View>
+  );
+}
+
+function MapModeScreen({
+  type,
+  title,
+  description,
+  onBack,
+}: {
+  type: "roadview";
+  title: string;
+  description: string;
+  onBack: () => void;
+}) {
+  return (
+    <View style={[styles.mapModeScreen, styles.roadViewScreen]}>
+      <Pressable style={styles.modeBackBtn} onPress={onBack}>
+        <Ionicons name="chevron-back" size={20} color="#111827" />
+        <Text style={styles.modeBackText}>돌아가기</Text>
+      </Pressable>
+
+      <View style={styles.roadViewSky} />
+      <View style={styles.roadViewGround} />
+      <View style={styles.roadViewLaneLeft} />
+      <View style={styles.roadViewLaneRight} />
+      <View style={styles.roadViewCenterLine} />
+
+      <View style={styles.modeCenterCard}>
+        <Text style={styles.modeTitle}>{title}</Text>
+        <Text style={styles.modeDescription}>{description}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MapOverlayControls({
+  showRouteInfo,
+  mapMode,
+  onToggleRoute,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+  onOpenSatelliteMode,
+  onOpenRoadViewMode,
+  onCloseModeScreen,
+}: {
+  showRouteInfo: boolean;
+  mapMode: "default" | "satellite" | "roadview";
+  onToggleRoute: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFit: () => void;
+  onOpenSatelliteMode: () => void;
+  onOpenRoadViewMode: () => void;
+  onCloseModeScreen: () => void;
+}) {
+  if (mapMode === "roadview") return null;
+
+  return (
+    <>
+      <Pressable
+        style={[styles.routeBtn, showRouteInfo && styles.routeBtnActive]}
+        onPress={onToggleRoute}
+      >
+        <Ionicons
+          name="navigate-outline"
+          size={20}
+          color={showRouteInfo ? COLORS.primary : "#334155"}
+        />
+      </Pressable>
+
+      <View style={styles.zoomBox}>
+        <Pressable style={styles.zoomBtn} onPress={onZoomIn}>
+          <Ionicons name="add" size={20} color="#334155" />
+        </Pressable>
+        <View style={styles.zoomDivider} />
+        <Pressable style={styles.zoomBtn} onPress={onZoomOut}>
+          <Ionicons name="remove" size={20} color="#334155" />
+        </Pressable>
+        <View style={styles.zoomDivider} />
+        <Pressable style={styles.zoomBtn} onPress={onFit}>
+          <Ionicons name="scan-outline" size={19} color="#334155" />
+        </Pressable>
+      </View>
+
+      <View style={styles.rightControlBox}>
+        <Pressable
+          style={[styles.rightBtn, mapMode === "satellite" && styles.rightBtnActive]}
+          onPress={mapMode === "satellite" ? onCloseModeScreen : onOpenSatelliteMode}
+        >
+          <Ionicons
+            name="map-outline"
+            size={21}
+            color={mapMode === "satellite" ? COLORS.primary : "#334155"}
+          />
+        </Pressable>
+
+        <Pressable style={styles.rightBtn} onPress={onOpenRoadViewMode}>
+          <Ionicons name="walk-outline" size={21} color="#334155" />
+        </Pressable>
+
+        <Pressable style={styles.rightBtn} onPress={onFit}>
+          <Ionicons name="locate-outline" size={21} color="#334155" />
+        </Pressable>
+      </View>
+    </>
   );
 }
 
@@ -2348,7 +2742,161 @@ const styles = StyleSheet.create({
   topBar: { backgroundColor: COLORS.primary },
   body: { flex: 1 },
 
-  map: { flex: 1, backgroundColor: "#DCEEFF" },
+  map: { flex: 1, backgroundColor: "#DCEEFF", position: "relative" },
+  routeBtn: {
+    position: "absolute",
+    left: 20,
+    top: 22,
+    width: 46,
+    height: 46,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 20,
+    ...SHADOW.card,
+  },
+  routeBtnActive: {
+    borderWidth: 2,
+    borderColor: "rgba(37,99,235,0.28)",
+  },
+  zoomBox: {
+    position: "absolute",
+    left: 20,
+    bottom: 18,
+    width: 44,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    zIndex: 20,
+    ...SHADOW.card,
+  },
+  zoomBtn: {
+    width: 44,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zoomDivider: {
+    height: 1,
+    backgroundColor: "rgba(15,23,42,0.10)",
+  },
+  rightControlBox: {
+    position: "absolute",
+    right: 20,
+    bottom: 18,
+    gap: 10,
+    zIndex: 20,
+  },
+  rightBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.card,
+  },
+  rightBtnActive: {
+    borderWidth: 2,
+    borderColor: "rgba(37,99,235,0.28)",
+  },
+  mapModeScreen: {
+    flex: 1,
+    position: "relative",
+    overflow: "hidden",
+  },
+  roadViewScreen: {
+    backgroundColor: "#CBD5E1",
+  },
+  modeBackBtn: {
+    position: "absolute",
+    left: 18,
+    top: 18,
+    width: 94,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    zIndex: 10,
+    ...SHADOW.card,
+  },
+  modeBackText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  modeCenterCard: {
+    position: "absolute",
+    left: 26,
+    right: 26,
+    top: "42%",
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    alignItems: "center",
+    ...SHADOW.card,
+  },
+  modeTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#111827",
+  },
+  modeDescription: {
+    marginTop: 7,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+    color: "#475569",
+    textAlign: "center",
+  },
+  roadViewSky: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    height: "48%",
+    backgroundColor: "#BFDBFE",
+  },
+  roadViewGround: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "58%",
+    backgroundColor: "#475569",
+  },
+  roadViewLaneLeft: {
+    position: "absolute",
+    left: "28%",
+    bottom: -50,
+    width: 6,
+    height: "62%",
+    backgroundColor: "rgba(255,255,255,0.75)",
+    transform: [{ rotate: "13deg" }],
+  },
+  roadViewLaneRight: {
+    position: "absolute",
+    right: "28%",
+    bottom: -50,
+    width: 6,
+    height: "62%",
+    backgroundColor: "rgba(255,255,255,0.75)",
+    transform: [{ rotate: "-13deg" }],
+  },
+  roadViewCenterLine: {
+    position: "absolute",
+    left: "50%",
+    bottom: 0,
+    marginLeft: -3,
+    width: 6,
+    height: "45%",
+    backgroundColor: "rgba(250,204,21,0.85)",
+  },
   road: { position: "absolute", left: 0, right: 0, backgroundColor: "#94A3B8" },
   roadV: {
     position: "absolute",
