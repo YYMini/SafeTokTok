@@ -416,7 +416,16 @@ function MapPlaceholder({
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <style>
           html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
-          #roadview { display: none; position: absolute; inset: 0; z-index: 10; background: #d1d5db; }
+          #roadview {
+            display: none;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            background: #d1d5db;
+          }
         </style>
         <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=d74e3a0d741775a29ef17516bf90fe89&autoload=false"></script>
       </head>
@@ -507,9 +516,11 @@ function MapPlaceholder({
                 postToApp({ type: 'roadviewError', message: '해당 위치는 거리뷰를 지원하지 않습니다' });
                 return;
               }
-              roadview.setPanoId(panoId, position);
               roadviewContainer.style.display = 'block';
               roadview.relayout();
+              roadview.setPanoId(panoId, position);
+              setTimeout(function() { roadview.relayout(); }, 0);
+              setTimeout(function() { roadview.relayout(); }, 120);
               isRoadviewActive = true;
               postToApp({ type: 'roadviewState', active: true });
             });
@@ -900,9 +911,11 @@ function MapPlaceholder({
         return;
       }
       setErrorText("");
-      roadviewRef.current.setPanoId(panoId, position);
       roadviewContainerRef.current!.style.display = "block";
       roadviewRef.current.relayout?.();
+      roadviewRef.current.setPanoId(panoId, position);
+      window.setTimeout(() => roadviewRef.current?.relayout?.(), 0);
+      window.setTimeout(() => roadviewRef.current?.relayout?.(), 120);
       setIsRoadviewOpen(true);
     });
   };
@@ -1557,7 +1570,10 @@ function MapPlaceholder({
         style={{
           display: "none",
           position: "absolute",
-          inset: 0,
+          left: 0,
+          top: 0,
+          width: "100%",
+          height: "100%",
           zIndex: 10,
           backgroundColor: "#D1D5DB",
         }}
