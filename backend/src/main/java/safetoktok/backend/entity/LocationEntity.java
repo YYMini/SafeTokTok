@@ -17,7 +17,7 @@ public class LocationEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(name = "child_id", nullable = false)
     private Long userId;
 
     @Column(nullable = false, length = 50)
