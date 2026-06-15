@@ -1720,6 +1720,7 @@ function ProfileModal({
   const [deletingChild, setDeletingChild] = useState(false);
 
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const childNameValueRef = useRef("");
 
   const [editingName, setEditingName] = useState(false);
   const [editingKey, setEditingKey] = useState<
@@ -1868,6 +1869,7 @@ function ProfileModal({
     setEditingKey(null);
     setChildModalOpen(false);
     setChildDraft({ name: "", age: "", loginId: "", password: "" });
+    childNameValueRef.current = "";
     setChildError("");
     Keyboard.dismiss();
 
@@ -1894,6 +1896,7 @@ function ProfileModal({
     if (!childModalOpen) return;
 
     setChildDraft({ name: "", age: "", loginId: "", password: "" });
+    childNameValueRef.current = "";
     setChildError("");
     setAddingChild(false);
   }, [childModalOpen]);
@@ -2180,8 +2183,9 @@ function ProfileModal({
   };
 
   const submitChild = async () => {
+    const childName = childNameValueRef.current || childDraft.name;
     const trimmed = {
-      name: childDraft.name.trim(),
+      name: childName.trim(),
       age: childDraft.age.trim(),
       loginId: childDraft.loginId.trim(),
       password: childDraft.password,
@@ -2203,6 +2207,7 @@ function ProfileModal({
       const created = await onAddChild(trimmed);
       setDraftTargets((prev) => [...prev, created]);
       setChildDraft({ name: "", age: "", loginId: "", password: "" });
+      childNameValueRef.current = "";
       setChildError("");
       setChildModalOpen(false);
     } catch (error) {
@@ -2766,18 +2771,27 @@ function ProfileModal({
 
           <View style={styles.childModalBody}>
             <TextInput
-              value={childDraft.name}
-              onChangeText={(text) => changeChildDraft("name", text)}
+              key={childModalOpen ? "child-name-open" : "child-name-closed"}
+              defaultValue=""
+              onChangeText={(text) => {
+                childNameValueRef.current = text;
+                setChildError("");
+              }}
+              onChange={(event) => {
+                childNameValueRef.current = event.nativeEvent.text;
+                setChildError("");
+              }}
+              onEndEditing={(event) =>
+                changeChildDraft("name", event.nativeEvent.text)
+              }
               placeholder="자녀 이름"
               placeholderTextColor="rgba(17,24,39,0.35)"
               style={styles.childInput}
               keyboardType="default"
               returnKeyType="next"
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              autoComplete="name"
-              textContentType="name"
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
             />
             <TextInput
               value={childDraft.age}
