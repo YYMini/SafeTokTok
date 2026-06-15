@@ -59,6 +59,10 @@ public class LocationController {
             throw new IllegalArgumentException("자녀 계정만 위치를 저장할 수 있습니다.");
         }
 
+        if (!isKakaoMapCoordinate(request.getLatitude(), request.getLongitude())) {
+            throw new IllegalArgumentException("카카오맵 표시 범위 밖 위치는 저장할 수 없습니다.");
+        }
+
         LocationEntity location = new LocationEntity(
                 child.getId(),
                 child.getName(),
@@ -113,6 +117,7 @@ public class LocationController {
 
         return locationRepository.findLatestLocationsByChildIds(childIds)
                 .stream()
+                .filter(location -> isKakaoMapCoordinate(location.getLatitude(), location.getLongitude()))
                 .map(location -> {
                     UserEntity child = children.get(location.getChildId());
                     String name = child == null ? location.getName() : child.getName();
@@ -139,6 +144,7 @@ public class LocationController {
 
         return locationRepository.findLatestLocationsByChildIds(List.copyOf(childIds))
                 .stream()
+                .filter(location -> isKakaoMapCoordinate(location.getLatitude(), location.getLongitude()))
                 .map(location -> {
                     UserEntity child = children.get(location.getChildId());
                     String name = child == null ? location.getName() : child.getName();
@@ -154,5 +160,16 @@ public class LocationController {
                 location.getLatitude(),
                 location.getLongitude()
         );
+    }
+
+    private boolean isKakaoMapCoordinate(Double latitude, Double longitude) {
+        return latitude != null
+                && longitude != null
+                && Double.isFinite(latitude)
+                && Double.isFinite(longitude)
+                && latitude >= 33
+                && latitude <= 39.5
+                && longitude >= 124
+                && longitude <= 132;
     }
 }

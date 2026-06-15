@@ -84,6 +84,14 @@ type MapTarget = {
   longitude: number;
 };
 
+const isKakaoMapCoordinate = (latitude: number, longitude: number) =>
+  Number.isFinite(latitude) &&
+  Number.isFinite(longitude) &&
+  latitude >= 33 &&
+  latitude <= 39.5 &&
+  longitude >= 124 &&
+  longitude <= 132;
+
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
@@ -426,6 +434,15 @@ function MapPlaceholder({
             setTimeout(relayoutMap, 120);
           }
 
+          function isKakaoMapCoordinate(latitude, longitude) {
+            return Number.isFinite(latitude) &&
+              Number.isFinite(longitude) &&
+              latitude >= 33 &&
+              latitude <= 39.5 &&
+              longitude >= 124 &&
+              longitude <= 132;
+          }
+
           function clearMarkers() {
             markers.forEach(function(marker) { marker.setMap(null); });
             overlays.forEach(function(overlay) { overlay.setMap(null); });
@@ -531,7 +548,9 @@ function MapPlaceholder({
           function renderTargets(targets) {
             if (!map || !Array.isArray(targets)) return;
             if (targets.length === 0 && markers.length > 0) return;
-            currentTargets = targets;
+            currentTargets = targets.filter(function(target) {
+              return isKakaoMapCoordinate(target.latitude, target.longitude);
+            });
             clearMarkers();
 
             refreshMapTiles();
@@ -591,7 +610,10 @@ function MapPlaceholder({
 
   const renderMarkers = (targets: MapTarget[]) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
-    latestTargetsRef.current = targets;
+    const validTargets = targets.filter((target) =>
+      isKakaoMapCoordinate(target.latitude, target.longitude),
+    );
+    latestTargetsRef.current = validTargets;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
@@ -617,7 +639,7 @@ function MapPlaceholder({
       }
     >();
 
-    targets.forEach((target) => {
+    validTargets.forEach((target) => {
       const key = `${target.latitude.toFixed(4)},${target.longitude.toFixed(4)}`;
       const group = groups.get(key);
       if (group) {
@@ -837,6 +859,14 @@ function MapPlaceholder({
         return false;
       }
 
+      if (!isKakaoMapCoordinate(lat, lng)) {
+        console.log("카카오맵 표시 범위 밖 위치 저장 차단", {
+          latitude: lat,
+          longitude: lng,
+        });
+        return false;
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/locations`, {
         method: "POST",
         headers: {
@@ -896,14 +926,20 @@ function MapPlaceholder({
 
       console.log("받은 latest 데이터", data);
 
-      if (Array.isArray(data) && data.length > 0) {
+      const validData = Array.isArray(data)
+        ? data.filter((target) =>
+            isKakaoMapCoordinate(target.latitude, target.longitude),
+          )
+        : [];
+
+      if (validData.length > 0) {
         if (Platform.OS === "web") {
-          renderMarkers(data);
+          renderMarkers(validData);
           if (showRouteInfo) {
             setTimeout(drawWebRoute, 0);
           }
         } else {
-          renderMobileMarkers(data);
+          renderMobileMarkers(validData);
           if (showRouteInfo) {
             sendMobileMapCommand("routeOn");
           }
@@ -2705,9 +2741,13 @@ function ProfileModal({
               }}
               placeholder="자녀 이름"
               placeholderTextColor="rgba(17,24,39,0.35)"
-              style={styles.childInput}
-              inputMode="text"
+              style={[styles.childInput, styles.childNameInput]}
+              keyboardType="default"
+              multiline
+              numberOfLines={1}
+              textAlignVertical="center"
               returnKeyType="next"
+              blurOnSubmit={false}
               showSoftInputOnFocus
               autoComplete="off"
               textContentType="none"
@@ -3453,6 +3493,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#111827",
+  },
+  childNameInput: {
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   childErrorText: {
     fontSize: 12,
