@@ -364,7 +364,11 @@ export default function TrackingDashboard() {
       </View>
 
       <View style={styles.body}>
-        <MapPlaceholder currentUserId={currentUserId} currentUserRole={currentUserRole} />
+        <MapPlaceholder
+          currentUserId={currentUserId}
+          currentUserRole={currentUserRole}
+          linkedTargets={linkedTargets}
+        />
       </View>
 
       <ProfileModal
@@ -387,9 +391,11 @@ export default function TrackingDashboard() {
 function MapPlaceholder({
   currentUserId,
   currentUserRole,
+  linkedTargets,
 }: {
   currentUserId: number | null;
   currentUserRole: string | null;
+  linkedTargets: Target[];
 }) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const roadviewContainerRef = useRef<HTMLDivElement | null>(null);
@@ -401,6 +407,7 @@ function MapPlaceholder({
   const overlaysRef = useRef<any[]>([]);
   const routeLineRef = useRef<any>(null);
   const routeOverlayRef = useRef<any>(null);
+  const currentPositionRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<number | null>(null);
   const latestUserIdRef = useRef<number | null>(currentUserId);
@@ -411,6 +418,9 @@ function MapPlaceholder({
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [showRouteInfo, setShowRouteInfo] = useState(false);
+  const [routeTargetModalOpen, setRouteTargetModalOpen] = useState(false);
+  const [selectedRouteTarget, setSelectedRouteTarget] = useState<MapTarget | null>(null);
+  const [mapTargets, setMapTargets] = useState<MapTarget[]>([]);
   const [mapMode, setMapMode] = useState<"default" | "satellite" | "roadview">("default");
   const [isRoadviewOpen, setIsRoadviewOpen] = useState(false);
   const roadviewUnsupportedMessage = "해당 위치는 거리뷰를 지원하지 않습니다";
@@ -456,6 +466,7 @@ function MapPlaceholder({
           var markers = [];
           var overlays = [];
           var currentTargets = [];
+          var currentPosition = null;
           var routeLine = null;
           var routeOverlay = null;
 
@@ -551,11 +562,17 @@ function MapPlaceholder({
             else openRoadview();
           }
 
-          function drawRoute() {
+          function drawRoute(payload) {
             if (!map || !currentTargets.length) return;
             clearRoute();
-            var start = map.getCenter();
-            var target = currentTargets[0];
+            var start = currentPosition && isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
+              ? new kakao.maps.LatLng(currentPosition.latitude, currentPosition.longitude)
+              : map.getCenter();
+            var target = currentTargets.find(function(item) {
+              return payload && payload.targetId != null && String(item.userId) === String(payload.targetId);
+            }) || currentTargets.find(function(item) {
+              return payload && payload.targetName && item.name === payload.targetName;
+            }) || currentTargets[0];
             var end = new kakao.maps.LatLng(target.latitude, target.longitude);
             routeLine = new kakao.maps.Polyline({
               map: map,
@@ -572,8 +589,9 @@ function MapPlaceholder({
                 (start.getLng() + end.getLng()) / 2
               ),
               yAnchor: 1.1,
-              content: '<div style="background:white;border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:800;color:#2563eb;box-shadow:0 4px 12px rgba(15,23,42,0.18);white-space:nowrap;">길찾기</div>'
+              content: '<div style="background:white;border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:800;color:#2563eb;box-shadow:0 4px 12px rgba(15,23,42,0.18);white-space:nowrap;">' + escapeHtml(target.name) + ' 길찾기</div>'
             });
+            map.panTo(end);
           }
 
           function fitMarkers() {
@@ -620,7 +638,11 @@ function MapPlaceholder({
             } else if (payload.type === 'default') {
               map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
             } else if (payload.type === 'routeOn') {
-              drawRoute();
+              drawRoute(payload);
+            } else if (payload.type === 'updateCurrentPosition') {
+              if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
+                currentPosition = { latitude: payload.latitude, longitude: payload.longitude };
+              }
             } else if (payload.type === 'routeOff') {
               clearRoute();
             } else if (payload.type === 'roadviewToggle') {
@@ -712,6 +734,7 @@ function MapPlaceholder({
       isKakaoMapCoordinate(target.latitude, target.longitude),
     );
     latestTargetsRef.current = validTargets;
+    setMapTargets(validTargets);
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
@@ -845,11 +868,15 @@ function MapPlaceholder({
   };
 
   const renderMobileMarkers = (targets: MapTarget[]) => {
-    latestTargetsRef.current = targets;
+    const validTargets = targets.filter((target) =>
+      isKakaoMapCoordinate(target.latitude, target.longitude),
+    );
+    latestTargetsRef.current = validTargets;
+    setMapTargets(validTargets);
     mobileWebViewRef.current?.postMessage(
       JSON.stringify({
         type: "markers",
-        targets,
+        targets: validTargets,
       }),
     );
   };
@@ -938,14 +965,17 @@ function MapPlaceholder({
     });
   };
 
-  const drawWebRoute = () => {
+  const drawWebRoute = (targetParam?: MapTarget | null) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
-    const target = latestTargetsRef.current[0];
+    const target = targetParam ?? selectedRouteTarget ?? latestTargetsRef.current[0];
     if (!target) return;
 
     clearWebRoute();
 
-    const start = mapInstanceRef.current.getCenter();
+    const currentPosition = currentPositionRef.current;
+    const start = currentPosition && isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
+      ? new window.kakao.maps.LatLng(currentPosition.latitude, currentPosition.longitude)
+      : mapInstanceRef.current.getCenter();
     const end = new window.kakao.maps.LatLng(target.latitude, target.longitude);
 
     routeLineRef.current = new window.kakao.maps.Polyline({
@@ -975,7 +1005,7 @@ function MapPlaceholder({
           color:#2563eb;
           font-weight:800;
           white-space:nowrap;
-        ">길찾기</div>
+        ">${target.name} 길찾기</div>
       `,
       yAnchor: 1.1,
     });
@@ -1036,6 +1066,11 @@ function MapPlaceholder({
           longitude: lng,
         });
         return false;
+      }
+
+      currentPositionRef.current = { latitude: lat, longitude: lng };
+      if (Platform.OS !== "web") {
+        sendMobileMapCommand("updateCurrentPosition", { latitude: lat, longitude: lng });
       }
 
       const response = await fetch(`${API_BASE_URL}/api/locations`, {
@@ -1107,12 +1142,17 @@ function MapPlaceholder({
         if (Platform.OS === "web") {
           renderMarkers(validData);
           if (showRouteInfo) {
-            setTimeout(drawWebRoute, 0);
+            const routeTarget = selectedRouteTarget ?? validData[0];
+            setTimeout(() => drawWebRoute(routeTarget), 0);
           }
         } else {
           renderMobileMarkers(validData);
           if (showRouteInfo) {
-            sendMobileMapCommand("routeOn");
+            const routeTarget = selectedRouteTarget ?? validData[0];
+            sendMobileMapCommand("routeOn", {
+              targetId: routeTarget?.userId,
+              targetName: routeTarget?.name,
+            });
           }
         }
         hasRenderedMarkersRef.current = true;
@@ -1172,19 +1212,49 @@ function MapPlaceholder({
     }
   };
 
-  const toggleRoute = () => {
-    setShowRouteInfo((prev) => {
-      const next = !prev;
+  const openRouteTargetModal = () => {
+    if (showRouteInfo) {
+      setShowRouteInfo(false);
+      setSelectedRouteTarget(null);
       if (Platform.OS === "web") {
-        setTimeout(() => {
-          if (next) drawWebRoute();
-          else clearWebRoute();
-        }, 0);
+        clearWebRoute();
       } else {
-        sendMobileMapCommand(next ? "routeOn" : "routeOff");
+        sendMobileMapCommand("routeOff");
       }
-      return next;
-    });
+      return;
+    }
+
+    const candidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    if (candidates.length === 0) {
+      setErrorText("길찾기할 대상자의 위치 정보가 없습니다.");
+      return;
+    }
+
+    setSelectedRouteTarget((prev) => prev ?? candidates[0]);
+    setRouteTargetModalOpen(true);
+  };
+
+  const startRouteToTarget = () => {
+    const candidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    const target = selectedRouteTarget ?? candidates[0];
+    if (!target) {
+      setErrorText("길찾기할 대상자를 선택해주세요.");
+      return;
+    }
+
+    setRouteTargetModalOpen(false);
+    setSelectedRouteTarget(target);
+    setShowRouteInfo(true);
+    setErrorText("");
+
+    if (Platform.OS === "web") {
+      setTimeout(() => drawWebRoute(target), 0);
+    } else {
+      sendMobileMapCommand("routeOn", {
+        targetId: target.userId,
+        targetName: target.name,
+      });
+    }
   };
 
   const openSatelliteMode = () => {
@@ -1519,13 +1589,23 @@ function MapPlaceholder({
         <MapOverlayControls
           showRouteInfo={showRouteInfo}
           mapMode={isRoadviewOpen ? "roadview" : mapMode}
-          onToggleRoute={toggleRoute}
+          onToggleRoute={openRouteTargetModal}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onFit={fitMap}
           onOpenSatelliteMode={openSatelliteMode}
           onOpenRoadViewMode={openRoadViewMode}
           onCloseModeScreen={closeModeScreen}
+        />
+
+        <RouteTargetModal
+          visible={routeTargetModalOpen}
+          targets={mapTargets}
+          selectedTarget={selectedRouteTarget}
+          linkedTargets={linkedTargets}
+          onSelect={setSelectedRouteTarget}
+          onClose={() => setRouteTargetModalOpen(false)}
+          onStart={startRouteToTarget}
         />
       </View>
     );
@@ -1593,7 +1673,7 @@ function MapPlaceholder({
       <MapOverlayControls
         showRouteInfo={showRouteInfo}
         mapMode={isRoadviewOpen ? "roadview" : mapMode}
-        onToggleRoute={toggleRoute}
+        onToggleRoute={openRouteTargetModal}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onFit={fitMap}
@@ -1601,7 +1681,113 @@ function MapPlaceholder({
         onOpenRoadViewMode={openRoadViewMode}
         onCloseModeScreen={closeModeScreen}
       />
+
+      <RouteTargetModal
+        visible={routeTargetModalOpen}
+        targets={mapTargets}
+        selectedTarget={selectedRouteTarget}
+        linkedTargets={linkedTargets}
+        onSelect={setSelectedRouteTarget}
+        onClose={() => setRouteTargetModalOpen(false)}
+        onStart={startRouteToTarget}
+      />
     </View>
+  );
+}
+
+
+function RouteTargetModal({
+  visible,
+  targets,
+  selectedTarget,
+  linkedTargets,
+  onSelect,
+  onClose,
+  onStart,
+}: {
+  visible: boolean;
+  targets: MapTarget[];
+  selectedTarget: MapTarget | null;
+  linkedTargets: Target[];
+  onSelect: (target: MapTarget) => void;
+  onClose: () => void;
+  onStart: () => void;
+}) {
+  const targetList = targets.filter((target) =>
+    isKakaoMapCoordinate(target.latitude, target.longitude),
+  );
+
+  const getTargetSub = (target: MapTarget) => {
+    const byId = linkedTargets.find((item) => String(item.id) === String(target.userId));
+    const byName = linkedTargets.find((item) => item.name === target.name);
+    return byId?.sub ?? byName?.sub ?? "연결된 대상자";
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.routeModalDim}>
+        <View style={styles.routeModalBox}>
+          <View style={styles.routeModalHeader}>
+            <View>
+              <Text style={styles.routeModalTitle}>도착지 선택</Text>
+              <Text style={styles.routeModalSub}>길찾기할 대상자를 선택해주세요</Text>
+            </View>
+            <Pressable style={styles.routeModalCloseBtn} onPress={onClose} hitSlop={8}>
+              <Ionicons name="close" size={20} color="#64748B" />
+            </Pressable>
+          </View>
+
+          {targetList.length === 0 ? (
+            <View style={styles.routeEmptyBox}>
+              <Ionicons name="location-outline" size={24} color="#94A3B8" />
+              <Text style={styles.routeEmptyText}>표시할 대상자 위치가 없습니다</Text>
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.routeTargetScroll}
+              contentContainerStyle={styles.routeTargetList}
+              showsVerticalScrollIndicator={targetList.length > 4}
+              nestedScrollEnabled
+            >
+              {targetList.map((target) => {
+                const selected = selectedTarget?.userId === target.userId;
+                return (
+                  <Pressable
+                    key={`${target.userId}-${target.name}`}
+                    style={[styles.routeTargetItem, selected && styles.routeTargetItemOn]}
+                    onPress={() => onSelect(target)}
+                  >
+                    <View style={[styles.routeTargetRadio, selected && styles.routeTargetRadioOn]}>
+                      {selected && <View style={styles.routeTargetRadioDot} />}
+                    </View>
+
+                    <View style={styles.routeTargetInfo}>
+                      <Text style={styles.routeTargetName}>{target.name}</Text>
+                      <Text style={styles.routeTargetSub}>{getTargetSub(target)}</Text>
+                    </View>
+
+                    <Ionicons name="navigate-outline" size={18} color={selected ? COLORS.primary : "#94A3B8"} />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          <View style={styles.routeModalActions}>
+            <Pressable style={styles.routeCancelBtn} onPress={onClose}>
+              <Text style={styles.routeCancelText}>취소</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.routeStartBtn, targetList.length === 0 && styles.routeStartBtnDisabled]}
+              disabled={targetList.length === 0}
+              onPress={onStart}
+            >
+              <Text style={styles.routeStartText}>길찾기</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -3090,6 +3276,149 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(37,99,235,0.28)",
   },
+  routeModalDim: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.42)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 22,
+  },
+  routeModalBox: {
+    width: "100%",
+    maxWidth: 340,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    padding: 18,
+    ...SHADOW.card,
+  },
+  routeModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  routeModalTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#111827",
+  },
+  routeModalSub: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+  routeModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeEmptyBox: {
+    height: 150,
+    borderRadius: 16,
+    backgroundColor: "#F8FAFC",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  routeEmptyText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  routeTargetScroll: {
+    maxHeight: 272,
+  },
+  routeTargetList: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  routeTargetItem: {
+    minHeight: 60,
+    borderRadius: 15,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  routeTargetItemOn: {
+    backgroundColor: "#EFF6FF",
+    borderColor: "rgba(37,99,235,0.35)",
+  },
+  routeTargetRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeTargetRadioOn: {
+    borderColor: COLORS.primary,
+  },
+  routeTargetRadioDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: COLORS.primary,
+  },
+  routeTargetInfo: {
+    flex: 1,
+  },
+  routeTargetName: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111827",
+  },
+  routeTargetSub: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+  routeModalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  routeCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeCancelText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#475569",
+  },
+  routeStartBtn: {
+    flex: 1.35,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeStartBtnDisabled: {
+    opacity: 0.45,
+  },
+  routeStartText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#fff",
+  },
+
   zoomBox: {
     position: "absolute",
     left: 20,
