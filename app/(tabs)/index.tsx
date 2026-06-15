@@ -415,7 +415,15 @@ function MapPlaceholder({
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <style>
-          html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
+          html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+          #map {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+          }
           #roadview {
             display: none;
             position: absolute;
@@ -423,7 +431,7 @@ function MapPlaceholder({
             top: 0;
             width: 100%;
             height: 100%;
-            z-index: 10;
+            z-index: 30;
             background: #d1d5db;
           }
         </style>
@@ -508,8 +516,11 @@ function MapPlaceholder({
           }
 
           function openRoadview() {
-            if (!map || !roadview || !roadviewClient || !roadviewContainer) return;
+            if (!map || !roadviewContainer) return;
             var position = getRoadviewPosition();
+            if (!roadviewClient) {
+              roadviewClient = new kakao.maps.RoadviewClient();
+            }
             roadviewClient.getNearestPanoId(position, 200, function(panoId) {
               if (!panoId) {
                 closeRoadview();
@@ -517,6 +528,9 @@ function MapPlaceholder({
                 return;
               }
               roadviewContainer.style.display = 'block';
+              if (!roadview) {
+                roadview = new kakao.maps.Roadview(roadviewContainer);
+              }
               roadview.relayout();
               roadview.setPanoId(panoId, position);
               setTimeout(function() { roadview.relayout(); }, 0);
@@ -666,8 +680,6 @@ function MapPlaceholder({
               level: 3
             });
             roadviewContainer = document.getElementById('roadview');
-            roadview = new kakao.maps.Roadview(roadviewContainer);
-            roadviewClient = new kakao.maps.RoadviewClient();
             map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
             relayoutMap();
             setTimeout(relayoutMap, 100);
@@ -893,11 +905,6 @@ function MapPlaceholder({
     ) {
       return;
     }
-    if (!roadviewRef.current) {
-      roadviewRef.current = new window.kakao.maps.Roadview(
-        roadviewContainerRef.current,
-      );
-    }
     if (!roadviewClientRef.current) {
       roadviewClientRef.current = new window.kakao.maps.RoadviewClient();
     }
@@ -912,6 +919,11 @@ function MapPlaceholder({
       }
       setErrorText("");
       roadviewContainerRef.current!.style.display = "block";
+      if (!roadviewRef.current) {
+        roadviewRef.current = new window.kakao.maps.Roadview(
+          roadviewContainerRef.current,
+        );
+      }
       roadviewRef.current.relayout?.();
       roadviewRef.current.setPanoId(panoId, position);
       window.setTimeout(() => roadviewRef.current?.relayout?.(), 0);
@@ -1368,13 +1380,6 @@ function MapPlaceholder({
       mapInstanceRef.current.relayout?.();
       window.setTimeout(() => mapInstanceRef.current?.relayout?.(), 100);
       window.setTimeout(() => mapInstanceRef.current?.relayout?.(), 500);
-
-      if (roadviewContainerRef.current) {
-        roadviewRef.current = new window.kakao.maps.Roadview(
-          roadviewContainerRef.current,
-        );
-        roadviewClientRef.current = new window.kakao.maps.RoadviewClient();
-      }
 
       startGeolocation();
 
