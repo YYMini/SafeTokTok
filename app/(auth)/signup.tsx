@@ -18,12 +18,11 @@ import {
 import { API_BASE_URL } from "../../constants/api";
 import { COLORS, SHADOW } from "../../constants/theme";
 
-type Role = "user" | "guardian";
-type BackendRole = "PARENT" | "CHILD";
+type BackendRole = "PARENT";
 type ModalType = "terms" | "privacy" | "safety" | null;
 
 type Errors = Partial<
-  Record<"role" | "userId" | "pw" | "pw2" | "name" | "phone" | "email" | "agree", string>
+  Record<"userId" | "pw" | "pw2" | "name" | "phone" | "email" | "agree", string>
 >;
 
 const STORAGE_KEYS = {
@@ -44,7 +43,6 @@ export default function SignupScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const phoneInputRef = useRef<TextInput>(null);
 
-  const [role, setRole] = useState<Role | null>("guardian");
   const [userId, setUserId] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
@@ -104,12 +102,18 @@ export default function SignupScreen() {
     }
 
     if (trimmedId.length < 3) {
-      setErrors((prev) => ({ ...prev, userId: "아이디는 3자 이상 입력해주세요" }));
+      setErrors((prev) => ({
+        ...prev,
+        userId: "아이디는 3자 이상 입력해주세요",
+      }));
       return;
     }
 
     if (!ID_REGEX.test(trimmedId)) {
-      setErrors((prev) => ({ ...prev, userId: "아이디는 영문/숫자/기호로만 가능합니다" }));
+      setErrors((prev) => ({
+        ...prev,
+        userId: "아이디는 영문/숫자/기호로만 가능합니다",
+      }));
       return;
     }
 
@@ -136,29 +140,34 @@ export default function SignupScreen() {
     const trimmedName = name.trim();
     const trimmedEmail = email.trim();
 
-    if (!role) next.role = "역할을 선택해주세요";
-
     if (!trimmedId) next.userId = "아이디를 입력해주세요";
-    else if (trimmedId.length < 3) next.userId = "아이디는 3자 이상 입력해주세요";
-    else if (!ID_REGEX.test(trimmedId)) next.userId = "아이디는 영문/숫자/기호로만 가능합니다";
+    else if (trimmedId.length < 3)
+      next.userId = "아이디는 3자 이상 입력해주세요";
+    else if (!ID_REGEX.test(trimmedId))
+      next.userId = "아이디는 영문/숫자/기호로만 가능합니다";
     else if (!idChecked) next.userId = "아이디 중복 확인을 해주세요";
 
     if (!trimmedPw) next.pw = "비밀번호를 입력해주세요";
     else if (trimmedPw.length < 5) next.pw = "비밀번호는 5자 이상 입력해주세요";
-    else if (!PW_REGEX.test(trimmedPw)) next.pw = "비밀번호는 영문/숫자/기호로만 가능합니다";
+    else if (!PW_REGEX.test(trimmedPw))
+      next.pw = "비밀번호는 영문/숫자/기호로만 가능합니다";
 
     if (!trimmedPw2) next.pw2 = "비밀번호 확인을 입력해주세요";
-    else if (trimmedPw2 !== trimmedPw) next.pw2 = "비밀번호가 일치하지 않습니다";
+    else if (trimmedPw2 !== trimmedPw)
+      next.pw2 = "비밀번호가 일치하지 않습니다";
 
     if (!trimmedName) next.name = "이름을 입력해주세요";
     else if (trimmedName.length < 2) next.name = "이름은 2자 이상 입력해주세요";
 
     if (!phoneDigits) next.phone = "전화번호를 입력해주세요";
-    else if (phoneDigits.length !== 11) next.phone = "전화번호는 11자리만 가능합니다";
+    else if (phoneDigits.length !== 11)
+      next.phone = "전화번호는 11자리만 가능합니다";
 
-    if (trimmedEmail && !EMAIL_REGEX.test(trimmedEmail)) next.email = "이메일 형식이 올바르지 않습니다";
+    if (trimmedEmail && !EMAIL_REGEX.test(trimmedEmail))
+      next.email = "이메일 형식이 올바르지 않습니다";
 
-    if (!(agree1 && agree2 && agree3)) next.agree = "필수 약관에 모두 동의해주세요";
+    if (!(agree1 && agree2 && agree3))
+      next.agree = "필수 약관에 모두 동의해주세요";
 
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -166,69 +175,41 @@ export default function SignupScreen() {
 
   const checkDuplicate = async () => {
     try {
-      const savedPw = await AsyncStorage.getItem(STORAGE_KEYS.accountPw);
-      const savedProfileRaw = await AsyncStorage.getItem(STORAGE_KEYS.profile);
+      const savedId = await AsyncStorage.getItem(STORAGE_KEYS.accountId);
+      const trimmedId = userId.trim();
 
-      if (!savedPw && !savedProfileRaw) return true;
-
-      let savedProfile: {
-        name?: string;
-        email?: string;
-        phone?: string;
-      } | null = null;
-
-      if (savedProfileRaw) savedProfile = JSON.parse(savedProfileRaw);
-
-      const trimmedName = name.trim();
-      const trimmedEmail = email.trim();
-      const savedPhoneDigits = savedProfile?.phone?.replace(/-/g, "") ?? "";
-
-      const DUP_MSG = "이미 등록된 회원 정보입니다";
-      const nextErrors: Errors = {};
-      let duplicateFound = false;
-
-      if (savedPw && savedPw === pw) {
-        nextErrors.pw = DUP_MSG;
-        duplicateFound = true;
-      }
-
-      if (savedProfile?.name && savedProfile.name === trimmedName) {
-        nextErrors.name = DUP_MSG;
-        duplicateFound = true;
-      }
-
-      if (trimmedEmail && savedProfile?.email === trimmedEmail) {
-        nextErrors.email = DUP_MSG;
-        duplicateFound = true;
-      }
-
-      if (savedPhoneDigits && savedPhoneDigits === phoneDigits) {
-        nextErrors.phone = DUP_MSG;
-        duplicateFound = true;
-      }
-
-      if (duplicateFound) {
-        setErrors((prev) => ({ ...prev, ...nextErrors }));
+      if (savedId && savedId === trimmedId) {
+        setErrors((prev) => ({
+          ...prev,
+          userId: "이미 사용 중인 아이디입니다",
+        }));
+        setIdChecked(false);
+        setIdCheckMessage("");
         return false;
       }
 
       return true;
     } catch {
-      setErrors((prev) => ({
-        ...prev,
-        agree: "회원 정보 확인 중 오류가 발생했습니다",
-      }));
-      return false;
+      return true;
     }
   };
 
-  const renderPhoneCell = (value: string, placeholder: string, width: number) => {
+  const renderPhoneCell = (
+    value: string,
+    placeholder: string,
+    width: number,
+  ) => {
     const shown = value || placeholder;
     const isPlaceholder = value.length === 0;
 
     return (
       <View style={[styles.phoneCell, { width }]}>
-        <Text style={[styles.phoneCellText, isPlaceholder && styles.phonePlaceholder]}>
+        <Text
+          style={[
+            styles.phoneCellText,
+            isPlaceholder && styles.phonePlaceholder,
+          ]}
+        >
           {shown}
         </Text>
       </View>
@@ -290,13 +271,13 @@ export default function SignupScreen() {
 
   const onSubmit = async () => {
     const ok = validateAll();
-    if (!ok || !role) return;
+    if (!ok) return;
 
     const duplicateOk = await checkDuplicate();
     if (!duplicateOk) return;
 
     const phoneFormatted = `${phoneA}-${phoneB}-${phoneC}`;
-    const backendRole: BackendRole = role === "guardian" ? "PARENT" : "CHILD";
+    const backendRole: BackendRole = "PARENT";
 
     const profilePayload = {
       name: name.trim(),
@@ -304,8 +285,8 @@ export default function SignupScreen() {
       email: email.trim(),
       phone: phoneFormatted,
       imageUri: null,
-      role,
-      roleLabel: role === "guardian" ? "보호자" : "사용자",
+      role: "guardian",
+      roleLabel: "보호자",
     };
 
     setSubmitting(true);
@@ -329,14 +310,40 @@ export default function SignupScreen() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const created = (await response.json()) as { id: number; role: BackendRole };
+      const responseText = await response.text();
+      let created: {
+        id?: number;
+        userId?: number;
+        parentId?: number;
+        childId?: number;
+        role?: BackendRole;
+      } = {};
+
+      if (responseText) {
+        try {
+          created = JSON.parse(responseText);
+        } catch {
+          created = {};
+        }
+      }
+
+      const createdId =
+        created.id ??
+        created.userId ??
+        created.parentId ??
+        created.childId ??
+        Date.now();
+      const createdRole = created.role ?? backendRole;
 
       await AsyncStorage.setItem(STORAGE_KEYS.accountId, userId.trim());
       await AsyncStorage.setItem(STORAGE_KEYS.accountPw, pw);
-      await AsyncStorage.setItem(STORAGE_KEYS.accountRole, role);
-      await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(created.id));
-      await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, created.role);
-      await AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(profilePayload));
+      await AsyncStorage.setItem(STORAGE_KEYS.accountRole, "guardian");
+      await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(createdId));
+      await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, createdRole);
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.profile,
+        JSON.stringify(profilePayload),
+      );
       await AsyncStorage.setItem(STORAGE_KEYS.targets, JSON.stringify([]));
 
       await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
@@ -348,7 +355,8 @@ export default function SignupScreen() {
       console.log("회원가입 실패", error);
       setErrors((prev) => ({
         ...prev,
-        agree: "회원가입 저장에 실패했습니다. 서버 상태 또는 아이디 중복을 확인해주세요.",
+        agree:
+          "회원가입에 실패했습니다. 입력 정보 또는 이미 가입된 아이디인지 확인해주세요.",
       }));
     } finally {
       setSubmitting(false);
@@ -372,7 +380,10 @@ export default function SignupScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={0}
       >
-        <LinearGradient colors={[COLORS.bgTop, COLORS.bgBottom]} style={styles.flex}>
+        <LinearGradient
+          colors={[COLORS.bgTop, COLORS.bgBottom]}
+          style={styles.flex}
+        >
           <ScrollView
             ref={scrollRef}
             style={styles.scroll}
@@ -385,50 +396,12 @@ export default function SignupScreen() {
             overScrollMode="always"
           >
             <View style={styles.logoCircle}>
-              <Ionicons name="shield-checkmark" size={23} color={COLORS.primary} />
+              <Ionicons
+                name="shield-checkmark"
+                size={23}
+                color={COLORS.primary}
+              />
             </View>
-
-            <Text style={styles.label}>
-              역할 선택 <Text style={styles.required}>*</Text>
-            </Text>
-
-            <View style={styles.roleRow}>
-              <Pressable
-                style={[styles.roleBtn, role === "guardian" && styles.roleBtnOn]}
-                onPress={() => {
-                  setRole("guardian");
-                  clearFieldError("role");
-                }}
-              >
-                <Ionicons
-                  name="people-outline"
-                  size={16}
-                  color={role === "guardian" ? "#fff" : "#6B7280"}
-                />
-                <Text style={[styles.roleBtnText, role === "guardian" && styles.roleBtnTextOn]}>
-                  보호자
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[styles.roleBtn, role === "user" && styles.roleBtnOn]}
-                onPress={() => {
-                  setRole("user");
-                  clearFieldError("role");
-                }}
-              >
-                <Ionicons
-                  name="person-outline"
-                  size={16}
-                  color={role === "user" ? "#fff" : "#6B7280"}
-                />
-                <Text style={[styles.roleBtnText, role === "user" && styles.roleBtnTextOn]}>
-                  사용자
-                </Text>
-              </Pressable>
-            </View>
-
-            {!!errors.role && <Text style={styles.errorText}>{errors.role}</Text>}
 
             <Text style={styles.label}>
               아이디 <Text style={styles.required}>*</Text>
@@ -439,7 +412,6 @@ export default function SignupScreen() {
                 placeholder="아이디 입력"
                 placeholderTextColor="#9CA3AF"
                 value={userId}
-                onFocus={() => scrollToField(70)}
                 onChangeText={(t) => {
                   setUserId(t);
                   setIdChecked(false);
@@ -450,12 +422,19 @@ export default function SignupScreen() {
                 autoCorrect={false}
                 spellCheck={false}
               />
-              <Pressable style={styles.idCheckBtn} onPress={checkUserIdDuplicate}>
+              <Pressable
+                style={styles.idCheckBtn}
+                onPress={checkUserIdDuplicate}
+              >
                 <Text style={styles.idCheckBtnText}>중복 확인</Text>
               </Pressable>
             </View>
-            {!!errors.userId && <Text style={styles.errorText}>{errors.userId}</Text>}
-            {!!idCheckMessage && <Text style={styles.successText}>{idCheckMessage}</Text>}
+            {!!errors.userId && (
+              <Text style={styles.errorText}>{errors.userId}</Text>
+            )}
+            {!!idCheckMessage && (
+              <Text style={styles.successText}>{idCheckMessage}</Text>
+            )}
 
             <Text style={styles.label}>
               비밀번호 <Text style={styles.required}>*</Text>
@@ -467,7 +446,6 @@ export default function SignupScreen() {
                 placeholderTextColor="#9CA3AF"
                 secureTextEntry={!pwShow}
                 value={pw}
-                onFocus={() => scrollToField(150)}
                 onChangeText={(t) => {
                   setPw(t);
                   clearFieldError("pw");
@@ -476,8 +454,15 @@ export default function SignupScreen() {
                 autoCorrect={false}
                 spellCheck={false}
               />
-              <Pressable style={styles.eyeBtn} onPress={() => setPwShow((v) => !v)}>
-                <Ionicons name={pwShow ? "eye" : "eye-off"} size={18} color="#9CA3AF" />
+              <Pressable
+                style={styles.eyeBtn}
+                onPress={() => setPwShow((v) => !v)}
+              >
+                <Ionicons
+                  name={pwShow ? "eye" : "eye-off"}
+                  size={18}
+                  color="#9CA3AF"
+                />
               </Pressable>
             </View>
             {!!errors.pw && <Text style={styles.errorText}>{errors.pw}</Text>}
@@ -492,7 +477,6 @@ export default function SignupScreen() {
                 placeholderTextColor="#9CA3AF"
                 secureTextEntry={!pw2Show}
                 value={pw2}
-                onFocus={() => scrollToField(230)}
                 onChangeText={(t) => {
                   setPw2(t);
                   clearFieldError("pw2");
@@ -501,8 +485,15 @@ export default function SignupScreen() {
                 autoCorrect={false}
                 spellCheck={false}
               />
-              <Pressable style={styles.eyeBtn} onPress={() => setPw2Show((v) => !v)}>
-                <Ionicons name={pw2Show ? "eye" : "eye-off"} size={18} color="#9CA3AF" />
+              <Pressable
+                style={styles.eyeBtn}
+                onPress={() => setPw2Show((v) => !v)}
+              >
+                <Ionicons
+                  name={pw2Show ? "eye" : "eye-off"}
+                  size={18}
+                  color="#9CA3AF"
+                />
               </Pressable>
             </View>
             {!!errors.pw2 && <Text style={styles.errorText}>{errors.pw2}</Text>}
@@ -515,7 +506,6 @@ export default function SignupScreen() {
               placeholder="이름 입력"
               placeholderTextColor="#9CA3AF"
               value={name}
-              onFocus={() => scrollToField(310)}
               onChangeText={(t) => {
                 setName(t);
                 clearFieldError("name");
@@ -524,7 +514,9 @@ export default function SignupScreen() {
               autoCorrect={false}
               spellCheck={false}
             />
-            {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
+            {!!errors.name && (
+              <Text style={styles.errorText}>{errors.name}</Text>
+            )}
 
             <Text style={styles.label}>
               전화번호 <Text style={styles.required}>*</Text>
@@ -532,7 +524,6 @@ export default function SignupScreen() {
             <Pressable
               style={styles.phoneBox}
               onPress={() => {
-                scrollToField(390);
                 phoneInputRef.current?.focus();
               }}
             >
@@ -548,7 +539,6 @@ export default function SignupScreen() {
                 ref={phoneInputRef}
                 style={styles.hiddenPhoneInput}
                 value={phoneDigits}
-                onFocus={() => scrollToField(390)}
                 onChangeText={(t) => {
                   setPhoneDigits(onlyDigits(t, 11));
                   clearFieldError("phone");
@@ -559,7 +549,9 @@ export default function SignupScreen() {
                 caretHidden
               />
             </Pressable>
-            {!!errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
+            {!!errors.phone && (
+              <Text style={styles.errorText}>{errors.phone}</Text>
+            )}
 
             <Text style={styles.label}>이메일</Text>
             <TextInput
@@ -571,13 +563,14 @@ export default function SignupScreen() {
               autoCorrect={false}
               spellCheck={false}
               value={email}
-              onFocus={() => scrollToField(470)}
               onChangeText={(t) => {
                 setEmail(t);
                 clearFieldError("email");
               }}
             />
-            {!!errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+            {!!errors.email && (
+              <Text style={styles.errorText}>{errors.email}</Text>
+            )}
 
             <View style={styles.agreeRow}>
               <Pressable
@@ -621,16 +614,23 @@ export default function SignupScreen() {
               >
                 {agree3 && <Ionicons name="checkmark" size={14} color="#fff" />}
               </Pressable>
-              <Text style={styles.agreeText}>[필수] 생체정보 및 위치정보 동의</Text>
+              <Text style={styles.agreeText}>
+                [필수] 생체정보 및 위치정보 동의
+              </Text>
               <Pressable onPress={() => openModal("safety")}>
                 <Text style={styles.detailText}>자세히 보기</Text>
               </Pressable>
             </View>
 
-            {!!errors.agree && <Text style={styles.errorText}>{errors.agree}</Text>}
+            {!!errors.agree && (
+              <Text style={styles.errorText}>{errors.agree}</Text>
+            )}
 
             <Pressable
-              style={[styles.primaryBtn, !canSubmit && styles.primaryBtnDisabled]}
+              style={[
+                styles.primaryBtn,
+                !canSubmit && styles.primaryBtnDisabled,
+              ]}
               disabled={!canSubmit}
               onPress={onSubmit}
             >
@@ -654,7 +654,10 @@ export default function SignupScreen() {
               <Text style={styles.modalAgreeText}>동의</Text>
             </Pressable>
 
-            <Pressable style={styles.modalCloseBtn} onPress={() => setModalType(null)}>
+            <Pressable
+              style={styles.modalCloseBtn}
+              onPress={() => setModalType(null)}
+            >
               <Text style={styles.modalCloseText}>닫기</Text>
             </Pressable>
           </View>

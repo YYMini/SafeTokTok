@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { API_BASE_URL } from "../../constants/api";
 import { COLORS, SHADOW } from "../../constants/theme";
 
 type Method = "phone" | "email";
@@ -32,6 +33,9 @@ const STORAGE_KEYS = {
   accountId: "authAccountId",
   accountPw: "authAccountPw",
   profile: "profileData_v1",
+  remember: "rememberMe",
+  savedId: "savedLoginId",
+  savedPw: "savedLoginPw",
 } as const;
 
 const AUTH_CODE = "123456";
@@ -194,8 +198,50 @@ export default function FindPasswordScreen() {
     return Object.keys(next).length === 0;
   };
 
+  const syncPasswordToServer = async (nextPw: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          loginId: userId.trim(),
+          password: nextPw,
+          newPassword: nextPw,
+        }),
+      });
+
+      if (!response.ok) {
+        console.log("비밀번호 서버 반영 실패", response.status);
+      }
+    } catch (error) {
+      console.log("비밀번호 서버 반영 요청 실패", error);
+    }
+  };
+
   const saveNewPassword = async () => {
-    await AsyncStorage.setItem(STORAGE_KEYS.accountPw, pw.trim());
+    const nextPw = pw;
+    const inputId = userId.trim();
+
+    const [remember, savedId] = await Promise.all([
+      AsyncStorage.getItem(STORAGE_KEYS.remember),
+      AsyncStorage.getItem(STORAGE_KEYS.savedId),
+    ]);
+
+    await AsyncStorage.multiSet([
+      [STORAGE_KEYS.accountId, inputId],
+      [STORAGE_KEYS.accountPw, nextPw],
+    ]);
+
+    if (remember === "true" && (!savedId || savedId === inputId)) {
+      await AsyncStorage.multiSet([
+        [STORAGE_KEYS.savedId, inputId],
+        [STORAGE_KEYS.savedPw, nextPw],
+      ]);
+    }
+
+    await syncPasswordToServer(nextPw);
   };
 
   const resetContactInputs = (nextMethod: Method) => {

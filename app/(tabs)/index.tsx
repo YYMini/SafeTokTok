@@ -15,6 +15,7 @@ import {
   Alert,
   Image,
   Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -25,7 +26,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
 declare global {
@@ -97,6 +97,7 @@ const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
 const CURRENT_USER_ID_KEY = "currentUserId";
 const CURRENT_USER_ROLE_KEY = "currentUserRole";
+const ACCOUNT_ID_KEY = "authAccountId";
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
   userId: "admin",
@@ -117,8 +118,6 @@ type TooltipField = "userId" | "email" | "phone" | null;
 
 export default function TrackingDashboard() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [linkedTargets, setLinkedTargets] = useState<Target[]>(DEFAULT_TARGETS);
@@ -128,10 +127,11 @@ export default function TrackingDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [savedProfile, savedUserId, savedRole] = await Promise.all([
+        const [savedProfile, savedUserId, savedRole, savedAccountId] = await Promise.all([
           AsyncStorage.getItem(PROFILE_KEY),
           AsyncStorage.getItem(CURRENT_USER_ID_KEY),
           AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
+          AsyncStorage.getItem(ACCOUNT_ID_KEY),
         ]);
 
         if (savedUserId) {
@@ -154,9 +154,12 @@ export default function TrackingDashboard() {
           setProfile({
             ...DEFAULT_PROFILE,
             ...parsed,
+            userId: savedAccountId ?? parsed.userId ?? DEFAULT_PROFILE.userId,
             phone: parsed.phone ?? DEFAULT_PROFILE.phone,
             imageUri: parsed.imageUri ?? null,
           });
+        } else if (savedAccountId) {
+          setProfile({ ...DEFAULT_PROFILE, userId: savedAccountId });
         }
 
         setLinkedTargets([]);
@@ -316,7 +319,10 @@ export default function TrackingDashboard() {
   const saveProfile = async (next: Profile) => {
     setProfile(next);
     try {
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(next));
+      await AsyncStorage.multiSet([
+        [PROFILE_KEY, JSON.stringify(next)],
+        [ACCOUNT_ID_KEY, next.userId],
+      ]);
     } catch {
       Alert.alert("저장 실패", "프로필 설정을 저장하지 못했어요.");
     }
@@ -347,7 +353,7 @@ export default function TrackingDashboard() {
     <View style={styles.safe}>
       <StatusBar style="light" />
 
-      <View style={[styles.topBar, { paddingTop: insets.top }]}>
+      <View style={styles.topBar}>
         <Header
           roleLabel={profile.name}
           showLogout={false}
@@ -1469,10 +1475,6 @@ function MapOverlayControls({
         <Pressable style={styles.rightBtn} onPress={onOpenRoadViewMode}>
           <Ionicons name="walk-outline" size={21} color="#334155" />
         </Pressable>
-
-        <Pressable style={styles.rightBtn} onPress={onFit}>
-          <Ionicons name="locate-outline" size={21} color="#334155" />
-        </Pressable>
       </View>
     </>
   );
@@ -1546,7 +1548,7 @@ function PhoneVisualSlot({
             style={[
               styles.slotBaseChar,
               { width: digitW },
-              i < len && styles.charTransparent,
+              len > 0 && styles.charTransparent,
             ]}
           >
             {ch}
@@ -1663,6 +1665,8 @@ function ProfileModal({
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const childNameInputRef = useRef<TextInput>(null);
   const childNameValueRef = useRef("");
+  const targetsScrollRef = useRef<ScrollView>(null);
+  const modalScrollRef = useRef<ScrollView>(null);
 
   const [editingName, setEditingName] = useState(false);
   const [editingKey, setEditingKey] = useState<
@@ -2020,6 +2024,12 @@ function ProfileModal({
     }
   };
 
+  const scrollModalTo = (y: number) => {
+    setTimeout(() => {
+      modalScrollRef.current?.scrollTo({ y, animated: true });
+    }, 180);
+  };
+
   const enterEdit = (field: "userId" | "email" | "phone") => {
     setEditingName(false);
     clearTooltipTimer();
@@ -2029,12 +2039,14 @@ function ProfileModal({
     setEditingKey(field);
 
     if (field === "phone") {
+      scrollModalTo(210);
       setTimeout(() => {
         phoneInputRef.current?.focus();
       }, 0);
       return;
     }
 
+    scrollModalTo(field === "userId" ? 120 : 165);
     setTimeout(() => {
       if (field === "userId") {
         const len = draft.userId.length;
@@ -2148,6 +2160,9 @@ function ProfileModal({
     try {
       const created = await onAddChild(trimmed);
       setDraftTargets((prev) => [...prev, created]);
+      setTimeout(() => {
+        targetsScrollRef.current?.scrollToEnd({ animated: true });
+      }, 120);
       setChildDraft({ name: "", age: "", loginId: "", password: "" });
       childNameValueRef.current = "";
       setChildError("");
@@ -2224,7 +2239,12 @@ function ProfileModal({
         </Text>
       </View>
 
-      <View style={styles.modalCenter} pointerEvents="box-none">
+      <KeyboardAvoidingView
+        style={styles.modalCenter}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+        pointerEvents="box-none"
+      >
         <View style={styles.modalSheet}>
           <View style={styles.modalTop}>
             <Text style={styles.modalTitle}>내 프로필</Text>
@@ -2238,12 +2258,13 @@ function ProfileModal({
           </View>
 
           <ScrollView
+            ref={modalScrollRef}
             style={styles.modalScroll}
             contentContainerStyle={styles.modalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Pressable onPress={hideKeyboardAndTooltip}>
+            <View>
               <View style={styles.profileCenter}>
                 <View style={styles.profileAvatar}>
                   {draft.imageUri ? (
@@ -2286,6 +2307,7 @@ function ProfileModal({
                         clearTooltipTimer();
                         setTooltipField(null);
                         setEditingKey(null);
+                        scrollModalTo(0);
                         setEditingName(true);
                       }}
                       hitSlop={10}
@@ -2551,8 +2573,10 @@ function ProfileModal({
 
               <View style={styles.targetsCard}>
                 <ScrollView
+                  ref={targetsScrollRef}
                   style={styles.targetsScroll}
                   contentContainerStyle={styles.targetsScrollContent}
+                  scrollEnabled
                   showsVerticalScrollIndicator={draftTargets.length > 2}
                   nestedScrollEnabled
                   keyboardShouldPersistTaps="handled"
@@ -2637,10 +2661,10 @@ function ProfileModal({
                   </Text>
                 </Pressable>
               </View>
-            </Pressable>
+            </View>
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
 
     <Modal
@@ -2701,11 +2725,16 @@ function ProfileModal({
           setChildModalOpen(false);
         }}
       >
-        <Pressable
-          style={styles.childModalSheet}
-          onPress={(event) => event.stopPropagation()}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+          style={styles.childModalKeyboardAvoiding}
         >
-          <View style={styles.childModalTop}>
+          <Pressable
+            style={styles.childModalSheet}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <View style={styles.childModalTop}>
             <Text style={styles.childModalTitle}>자녀 추가하기</Text>
             <Pressable
               onPress={() => setChildModalOpen(false)}
@@ -2796,7 +2825,8 @@ function ProfileModal({
               </Text>
             </Pressable>
           </View>
-        </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Pressable>
     </Modal>
     </>
@@ -2805,7 +2835,9 @@ function ProfileModal({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  topBar: { backgroundColor: COLORS.primary },
+  topBar: {
+    backgroundColor: COLORS.primary,
+  },
   body: { flex: 1 },
 
   map: { flex: 1, backgroundColor: "#DCEEFF", position: "relative" },
@@ -2850,7 +2882,7 @@ const styles = StyleSheet.create({
   rightControlBox: {
     position: "absolute",
     right: 20,
-    bottom: 18,
+    bottom: 8,
     gap: 10,
     zIndex: 20,
   },
@@ -3039,7 +3071,7 @@ const styles = StyleSheet.create({
   },
   modalSheet: {
     width: "88%",
-    maxHeight: "81%",
+    maxHeight: "88%",
     backgroundColor: "#fff",
     borderRadius: 20,
     overflow: "visible",
@@ -3050,7 +3082,7 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   modalScrollContent: {
-    paddingBottom: 0,
+    paddingBottom: 18,
   },
 
   modalTop: {
@@ -3085,11 +3117,10 @@ const styles = StyleSheet.create({
     width: 86,
     height: 86,
     borderRadius: 43,
-    backgroundColor: "rgba(59,130,246,0.85)",
+    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    ...SHADOW.card,
+    overflow: "visible",
   },
   cameraBadge: {
     position: "absolute",
@@ -3240,8 +3271,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    minWidth: 190,
-    maxWidth: 230,
+    minWidth: 178,
+    maxWidth: 220,
+    marginRight: 8,
   },
   phoneHyphen: {
     width: 12,
@@ -3313,8 +3345,8 @@ const styles = StyleSheet.create({
   targetsCard: {
     marginHorizontal: 16,
     marginTop: 10,
-    minHeight: 135,
-    maxHeight: 135,
+    height: 129,
+    maxHeight: 129,
     borderRadius: 16,
     backgroundColor: "#fff",
     borderWidth: 1,
@@ -3325,10 +3357,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   targetsScrollContent: {
-    minHeight: 150,
+    minHeight: 129,
   },
   targetRow: {
-    padding: 14,
+    height: 64,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -3337,7 +3371,7 @@ const styles = StyleSheet.create({
 
   emptyTargetsBox: {
     flex: 1,
-    minHeight: 150,
+    minHeight: 129,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 16,
@@ -3403,6 +3437,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 22,
+  },
+  childModalKeyboardAvoiding: {
+    width: "100%",
+    maxWidth: 360,
   },
   childModalSheet: {
     width: "100%",
