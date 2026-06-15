@@ -41,6 +41,9 @@ type LoginResponse = {
   role: "PARENT" | "CHILD";
 };
 
+const toProfileRole = (role: LoginResponse["role"]) =>
+  role === "PARENT" ? "guardian" : "user";
+
 export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
@@ -157,7 +160,7 @@ export default function LoginScreen() {
         email: loggedInUser.email ?? "",
         phone: loggedInUser.phone ?? "010-0000-0000",
         imageUri: null,
-        role: loggedInUser.role,
+        role: toProfileRole(loggedInUser.role),
         roleLabel: loggedInUser.role === "PARENT" ? "보호자" : "사용자",
       }),
     );

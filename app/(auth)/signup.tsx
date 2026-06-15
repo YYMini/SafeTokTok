@@ -337,6 +337,7 @@ export default function SignupScreen() {
       await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(created.id));
       await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, created.role);
       await AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(profilePayload));
+      await AsyncStorage.setItem(STORAGE_KEYS.targets, JSON.stringify([]));
 
       await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
       await AsyncStorage.removeItem(STORAGE_KEYS.savedId);

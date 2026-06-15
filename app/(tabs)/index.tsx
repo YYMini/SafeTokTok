@@ -45,7 +45,7 @@ type Profile = {
   email: string;
   phone: string;
   imageUri: string | null;
-  role?: "user" | "guardian";
+  role?: "user" | "guardian" | "PARENT" | "CHILD";
   roleLabel?: string;
 };
 
@@ -61,6 +61,7 @@ const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
 const ACCOUNT_ID_KEY = "authAccountId";
 const CURRENT_USER_ID_KEY = "currentUserId";
+const CURRENT_USER_ROLE_KEY = "currentUserRole";
 
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
@@ -72,10 +73,18 @@ const DEFAULT_PROFILE: Profile = {
   roleLabel: "보호자",
 };
 
-const DEFAULT_TARGETS: Target[] = [
-  { id: "m1", name: "김민준", sub: "7세 · 자녀" },
-  { id: "s1", name: "이서윤", sub: "5세 · 자녀" },
-];
+const DEFAULT_TARGETS: Target[] = [];
+
+const normalizeProfileRole = (role?: Profile["role"]): "user" | "guardian" =>
+  role === "CHILD" || role === "user" ? "user" : "guardian";
+
+const isInvalidTarget = (target: Target) =>
+  target.id === "m1" ||
+  target.id === "s1" ||
+  target.sub.includes("99999");
+
+const sanitizeTargets = (targets: Target[]) =>
+  targets.filter((target) => !isInvalidTarget(target));
 
 export default function TrackingDashboard() {
   const router = useRouter();
@@ -84,6 +93,7 @@ export default function TrackingDashboard() {
   const [linkedTargets, setLinkedTargets] = useState<Target[]>(DEFAULT_TARGETS);
   const [showLoginToast, setShowLoginToast] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<"PARENT" | "CHILD" | null>(null);
 
   useEffect(() => {
     setShowLoginToast(true);
@@ -98,11 +108,12 @@ export default function TrackingDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [savedProfile, savedTargets, savedAccountId, savedUserId] = await Promise.all([
+        const [savedProfile, savedTargets, savedAccountId, savedUserId, savedUserRole] = await Promise.all([
           AsyncStorage.getItem(PROFILE_KEY),
           AsyncStorage.getItem(TARGETS_KEY),
           AsyncStorage.getItem(ACCOUNT_ID_KEY),
           AsyncStorage.getItem(CURRENT_USER_ID_KEY),
+          AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
         ]);
 
         if (savedUserId) {
@@ -112,8 +123,13 @@ export default function TrackingDashboard() {
           }
         }
 
+        if (savedUserRole === "PARENT" || savedUserRole === "CHILD") {
+          setCurrentUserRole(savedUserRole);
+        }
+
         if (savedProfile) {
           const parsed = JSON.parse(savedProfile) as Partial<Profile>;
+          const normalizedRole = normalizeProfileRole(parsed.role);
 
           setProfile({
             ...DEFAULT_PROFILE,
@@ -121,6 +137,8 @@ export default function TrackingDashboard() {
             userId: savedAccountId ?? parsed.userId ?? DEFAULT_PROFILE.userId,
             phone: parsed.phone ?? DEFAULT_PROFILE.phone,
             imageUri: parsed.imageUri ?? null,
+            role: normalizedRole,
+            roleLabel: parsed.roleLabel ?? (normalizedRole === "guardian" ? "보호자" : "사용자"),
           });
         } else if (savedAccountId) {
           setProfile({
@@ -132,7 +150,11 @@ export default function TrackingDashboard() {
         if (savedTargets) {
           const parsedTargets = JSON.parse(savedTargets) as Target[];
           if (Array.isArray(parsedTargets)) {
-            setLinkedTargets(parsedTargets);
+            const cleanTargets = sanitizeTargets(parsedTargets);
+            setLinkedTargets(cleanTargets);
+            if (cleanTargets.length !== parsedTargets.length) {
+              await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify(cleanTargets));
+            }
           }
         }
       } catch {
@@ -153,10 +175,11 @@ export default function TrackingDashboard() {
   };
 
   const saveTargets = async (next: Target[]) => {
-    setLinkedTargets(next);
+    const cleanTargets = sanitizeTargets(next);
+    setLinkedTargets(cleanTargets);
 
     try {
-      await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify(next));
+      await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify(cleanTargets));
     } catch {
       Alert.alert("저장 실패", "연결된 대상자 정보를 저장하지 못했어요.");
     }
@@ -202,6 +225,7 @@ export default function TrackingDashboard() {
           linkedTargets={linkedTargets}
           onSaveTargets={saveTargets}
           currentUserId={currentUserId}
+          currentUserRole={currentUserRole}
         />
       </View>
 
@@ -224,11 +248,13 @@ function MapPlaceholder({
   linkedTargets,
   onSaveTargets,
   currentUserId,
+  currentUserRole,
 }: {
   profile: Profile;
   linkedTargets: Target[];
   onSaveTargets: (targets: Target[]) => Promise<void> | void;
   currentUserId: number | null;
+  currentUserRole: "PARENT" | "CHILD" | null;
 }) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -251,14 +277,15 @@ function MapPlaceholder({
   const [mockZoom, setMockZoom] = useState(1);
   const [mockPan, setMockPan] = useState({ x: 0, y: 0 });
 
-  const isUserRole = profile.role === "user";
+  const isUserRole =
+    currentUserRole === "CHILD" || normalizeProfileRole(profile.role) === "user";
 
   // 현재 위험 상황이 발생한 대상자 기준값
   // 나중에 실제 알림/서버 연동 시 이 객체만 위험 대상자 데이터로 바꾸면
   // SOS 문구, 위험 아이콘, 길 안내 도착지가 모두 같은 대상자를 따라갑니다.
   const dangerTarget: DangerTarget = {
-    id: linkedTargets[0]?.id ?? "m1",
-    name: linkedTargets[0]?.name ?? "김민준",
+    id: linkedTargets[0]?.id ?? "",
+    name: linkedTargets[0]?.name ?? "",
     x: 70,
     y: 280,
     markerSize: 38,
@@ -369,7 +396,9 @@ function MapPlaceholder({
         map: mapInstanceRef.current,
       });
 
-      const isDanger = target.name === dangerTargetName;
+      const isGuardianLocation = target.childId === apiUserId && !isUserRole;
+      const isDanger = !isGuardianLocation && target.name === dangerTargetName;
+      const markerLabel = isGuardianLocation ? "보호자" : target.name;
       const content = `
         <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
           ${
@@ -387,7 +416,7 @@ function MapPlaceholder({
             white-space: nowrap;
             box-shadow: 0 2px 6px rgba(0,0,0,0.15);
           ">
-            ${target.name}
+            ${markerLabel}
           </div>
         </div>
       `;
@@ -414,9 +443,11 @@ function MapPlaceholder({
   };
 
   const childId = getChildIdFromUrl();
-  const apiUserId = currentUserId ?? childId;
+  const apiUserId = currentUserId;
 
   const sendLocationToServer = async (lat: number, lng: number) => {
+    if (apiUserId == null) return;
+
     try {
       await fetch(`${API_BASE_URL}/api/locations`, {
         method: "POST",
@@ -436,6 +467,8 @@ function MapPlaceholder({
   };
 
   const fetchLatestLocations = async () => {
+    if (apiUserId == null) return;
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/locations/latest`, {
         headers: {
@@ -550,6 +583,7 @@ function MapPlaceholder({
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
+    if (apiUserId == null) return;
 
     const startGeolocation = () => {
       if (!navigator.geolocation) {
@@ -648,7 +682,7 @@ function MapPlaceholder({
         clearInterval(intervalIdRef.current);
       }
     };
-  }, []);
+  }, [apiUserId, isUserRole]);
 
   return (
     <View style={styles.map}>
@@ -784,6 +818,18 @@ function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
   const centerLat = 37.5665;
   const centerLng = 126.978;
   const targetName = JSON.stringify(dangerTarget.name);
+  const targetScript = dangerTarget.name
+    ? `
+      var target = new kakao.maps.LatLng(${dangerTarget.latitude}, ${dangerTarget.longitude});
+      new kakao.maps.Marker({ map: map, position: target });
+      new kakao.maps.CustomOverlay({
+        map: map,
+        position: target,
+        yAnchor: 2.2,
+        content: '<div class="label danger">' + ${targetName} + '</div>'
+      });
+    `
+    : "";
   const mapType =
     mapMode === "satellite"
       ? "kakao.maps.MapTypeId.SKYVIEW"
@@ -816,7 +862,6 @@ function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
   <script>
     kakao.maps.load(function () {
       var center = new kakao.maps.LatLng(${centerLat}, ${centerLng});
-      var target = new kakao.maps.LatLng(${dangerTarget.latitude}, ${dangerTarget.longitude});
       var map = new kakao.maps.Map(document.getElementById('map'), {
         center: center,
         level: 3,
@@ -843,13 +888,7 @@ function getNativeKakaoMapHtml(dangerTarget: DangerTarget, mapMode: MapMode) {
         content: '<div class="label">보호자</div>'
       });
 
-      new kakao.maps.Marker({ map: map, position: target });
-      new kakao.maps.CustomOverlay({
-        map: map,
-        position: target,
-        yAnchor: 2.2,
-        content: '<div class="label danger">' + ${targetName} + '</div>'
-      });
+      ${targetScript}
     });
   </script>
 </body>
@@ -863,7 +902,7 @@ function NativeKakaoMap({
 }: {
   dangerTarget: DangerTarget;
   mapMode: MapMode;
-  webViewRef?: React.RefObject<WebView>;
+  webViewRef?: React.RefObject<WebView | null>;
 }) {
   return (
     <WebView
@@ -1051,7 +1090,7 @@ function MockMap(props: MockMapProps) {
 
         <View style={styles.safeZone} />
 
-        {props.showRouteInfo && (
+        {props.showRouteInfo && !!props.dangerTarget.name && (
           <MockRouteLine
             mapWidth={mapSize.width}
             mapHeight={mapSize.height}
@@ -1059,7 +1098,7 @@ function MockMap(props: MockMapProps) {
           />
         )}
 
-        <View style={styles.targetGreenWrap}>
+        <View style={[styles.targetGreenWrap, styles.hiddenMapItem]}>
           <View style={styles.personMarkerRingGreen}>
             <View style={styles.personCircleGreen}>
               <Text style={styles.personEmoji}>👶</Text>
@@ -1072,6 +1111,7 @@ function MockMap(props: MockMapProps) {
           style={[
             styles.targetOrangeWrap,
             { left: props.dangerTarget.x, top: props.dangerTarget.y },
+            !props.dangerTarget.name && styles.hiddenMapItem,
           ]}
           onPress={() => setDangerPopupOpen(true)}
           hitSlop={10}
@@ -2495,6 +2535,10 @@ const styles = StyleSheet.create({
     marginLeft: -23,
     alignItems: "center",
     zIndex: 10,
+  },
+
+  hiddenMapItem: {
+    display: "none",
   },
 
   guardianMarkerRing: {

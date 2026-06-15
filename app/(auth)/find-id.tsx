@@ -186,7 +186,6 @@ export default function FindIdScreen() {
       setStep(4);
     }
   };
-T
   const headerTitle = step === 4 ? "아이디 찾기 완료" : "아이디 찾기";
 
   const HERO_TEXT = useMemo(() => {
