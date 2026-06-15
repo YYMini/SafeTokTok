@@ -64,19 +64,21 @@ const DEFAULT_PROFILE: Profile = {
 const MOCK_LOCATION = {
   emergency: [
     { id: "e1", targetName: "김민준", occurredAt: "2025-11-11 14:32", address: "서울시 강남구 역삼동" },
-    { id: "e2", targetName: "이서윤", occurredAt: "2025-11-10 18:45", address: "서울시 서초구 방배동" },
-    { id: "e3", targetName: "김민준", occurredAt: "2025-11-09 16:12", address: "서울시 강남구 삼성동" },
-    { id: "e4", targetName: "이서윤", occurredAt: "2025-11-08 11:20", address: "서울시 서초구 반포동" },
+    { id: "e2", targetName: "김민준", occurredAt: "2025-11-10 18:45", address: "서울시 강남구 삼성동" },
+    { id: "e3", targetName: "김민준", occurredAt: "2025-11-09 16:12", address: "서울시 강남구 대치동" },
   ] as LocationAlert[],
+
   out: [
     { id: "o1", targetName: "김민준", occurredAt: "2025-11-11 12:15", address: "안전구역에서 120m 이탈", distance: 120 },
-    { id: "o2", targetName: "이서윤", occurredAt: "2025-11-09 15:10", address: "안전구역에서 85m 이탈", distance: 85 },
-    { id: "o3", targetName: "김민준", occurredAt: "2025-11-08 09:22", address: "안전구역에서 60m 이탈", distance: 60 },
+    { id: "o2", targetName: "이서윤", occurredAt: "2025-11-11 09:40", address: "안전구역에서 85m 이탈", distance: 85 },
+    { id: "o3", targetName: "김민준", occurredAt: "2025-11-10 17:28", address: "안전구역에서 60m 이탈", distance: 60 },
+    { id: "o4", targetName: "이서윤", occurredAt: "2025-11-09 15:10", address: "안전구역에서 95m 이탈", distance: 95 },
   ] as LocationAlert[],
+
   back: [
-    { id: "b1", targetName: "김민준", occurredAt: "2025-11-10 16:20", address: "안전구역으로 복귀" },
+    { id: "b1", targetName: "이서윤", occurredAt: "2025-11-11 10:05", address: "안전구역으로 복귀" },
     { id: "b2", targetName: "이서윤", occurredAt: "2025-11-09 16:02", address: "안전구역으로 복귀" },
-    { id: "b3", targetName: "김민준", occurredAt: "2025-11-08 10:01", address: "안전구역으로 복귀" },
+    { id: "b3", targetName: "이서윤", occurredAt: "2025-11-08 10:01", address: "안전구역으로 복귀" },
   ] as LocationAlert[],
 };
 
@@ -100,20 +102,30 @@ const MOCK_BIO = {
       id: "h2",
       targetName: "김민준",
       occurredAt: "2025-11-10 20:30",
-      label: "심박수 낮음",
-      address: "현재 심박수 45 bpm",
-      value: "45 bpm",
+      label: "심박수 미감지",
+      address: "웨어러블 기기에서 심박수 값이 수신되지 않음",
+      value: "미감지",
       valueColor: "#1267FF",
     },
   ] as BioAlert[],
+
   motion: [
     {
       id: "m1",
-      targetName: "이서윤",
-      occurredAt: "2025-11-10 13:10",
+      targetName: "김민준",
+      occurredAt: "2025-11-11 13:10",
       label: "움직임 없음",
       address: "30분 이상 움직임 없음",
       value: "30분",
+      valueColor: "#F59E0B",
+    },
+    {
+      id: "m2",
+      targetName: "김민준",
+      occurredAt: "2025-11-10 11:20",
+      label: "움직임 없음",
+      address: "20분 이상 움직임 없음",
+      value: "20분",
       valueColor: "#F59E0B",
     },
   ] as BioAlert[],
@@ -161,16 +173,6 @@ export default function AlertScreen() {
     try {
       /**
        * 백엔드 연동 시 실제 API로 교체.
-       *
-       * const response = await fetch(`${API_BASE_URL}/api/alerts`);
-       * const data = await response.json();
-       *
-       * setEmergencyAlerts(data.location.emergency);
-       * setOutAlerts(data.location.safeZoneOut);
-       * setBackAlerts(data.location.safeZoneBack);
-       * setDevices(data.bio.devices);
-       * setHeartAlerts(data.bio.heart);
-       * setMotionAlerts(data.bio.motion);
        */
     } catch {
       // 서버 연결 전에는 목업값 유지
@@ -207,9 +209,13 @@ export default function AlertScreen() {
             onPress={() => setTab("location")}
           >
             <View style={styles.mainTabInner}>
-              <Ionicons name="location-outline" size={18} color={tab === "location" ? "#1267FF" : "#64748B"} />
+              <Ionicons
+                name="location-outline"
+                size={18}
+                color={tab === "location" ? "#1267FF" : "#64748B"}
+              />
               <Text style={[styles.mainTabText, tab === "location" && styles.mainTabTextOn]}>
-                위치 추적
+                위치추적
               </Text>
             </View>
           </Pressable>
@@ -219,9 +225,13 @@ export default function AlertScreen() {
             onPress={() => setTab("bio")}
           >
             <View style={styles.mainTabInner}>
-              <Ionicons name="heart-outline" size={18} color={tab === "bio" ? "#1267FF" : "#64748B"} />
+              <Ionicons
+                name="heart-outline"
+                size={18}
+                color={tab === "bio" ? "#1267FF" : "#64748B"}
+              />
               <Text style={[styles.mainTabText, tab === "bio" && styles.mainTabTextOn]}>
-                생체 정보
+                생체정보
               </Text>
             </View>
           </Pressable>
@@ -235,6 +245,7 @@ export default function AlertScreen() {
                 title="긴급 요청"
                 alerts={emergencyAlerts}
                 color="#FF2F45"
+                titleIcon="warning-outline"
                 badgeLabel="긴급"
               />
 
@@ -243,6 +254,7 @@ export default function AlertScreen() {
                 title="안전구역 이탈"
                 alerts={outAlerts}
                 color="#FF6B00"
+                titleIcon="walk-outline"
                 badgeLabel="이탈"
               />
 
@@ -251,7 +263,8 @@ export default function AlertScreen() {
                 title="안전구역 복귀"
                 alerts={backAlerts}
                 color="#00C853"
-                badgeLabel="안전구역"
+                titleIcon="checkmark-circle-outline"
+                badgeLabel="복귀"
               />
             </View>
           ) : (
@@ -261,9 +274,12 @@ export default function AlertScreen() {
                 <Text style={styles.deviceTitle}>웨어러블 기기 상태</Text>
               </View>
 
-              {devices.map((device) => (
-                <DeviceCard key={device.id} device={device} />
-              ))}
+              <DeviceListCard devices={devices} />
+
+              <View style={styles.eventTitleRow}>
+                <Ionicons name="time-outline" size={15} color="#1267FF" />
+                <Text style={styles.eventTitle}>실시간 생체정보 이력</Text>
+              </View>
 
               <View style={styles.bioPanel}>
                 <View style={styles.bioTabs}>
@@ -290,8 +306,13 @@ export default function AlertScreen() {
                     showsVerticalScrollIndicator={activeBioAlerts.length > 2}
                     contentContainerStyle={styles.locationListContent}
                   >
-                    {activeBioAlerts.map((item) => (
-                      <BioAlertCard key={item.id} item={item} bioTab={bioTab} />
+                    {activeBioAlerts.map((item, index) => (
+                      <BioAlertCard
+                        key={item.id}
+                        item={item}
+                        bioTab={bioTab}
+                        isLast={index === activeBioAlerts.length - 1}
+                      />
                     ))}
                   </ScrollView>
                 </View>
@@ -299,7 +320,7 @@ export default function AlertScreen() {
             </>
           )}
 
-          <View style={{ height: 44 }} />
+          <View style={{ height: 25 }} />
         </ScrollView>
       </LinearGradient>
     </View>
@@ -311,18 +332,21 @@ function LocationGroupCard({
   title,
   alerts,
   color,
+  titleIcon,
   badgeLabel,
 }: {
   type: "emergency" | "out" | "back";
   title: string;
   alerts: LocationAlert[];
   color: string;
+  titleIcon: keyof typeof Ionicons.glyphMap;
   badgeLabel: string;
 }) {
   return (
     <View style={styles.locationBlock}>
       <View style={styles.locationBlockHeader}>
         <View style={styles.locationBlockTitleRow}>
+          <Ionicons name={titleIcon} size={17} color={color} />
           <Text style={styles.locationBlockTitle}>{title}</Text>
         </View>
 
@@ -336,12 +360,13 @@ function LocationGroupCard({
           showsVerticalScrollIndicator={alerts.length > 2}
           contentContainerStyle={styles.locationListContent}
         >
-          {alerts.map((item) => (
+          {alerts.map((item, index) => (
             <LocationAlertCard
               key={item.id}
               type={type}
               label={badgeLabel}
               item={item}
+              isLast={index === alerts.length - 1}
             />
           ))}
         </ScrollView>
@@ -354,10 +379,12 @@ function LocationAlertCard({
   type,
   label,
   item,
+  isLast,
 }: {
   type: "emergency" | "out" | "back";
   label: string;
   item: LocationAlert;
+  isLast: boolean;
 }) {
   const isEmergency = type === "emergency";
   const isOut = type === "out";
@@ -365,7 +392,16 @@ function LocationAlertCard({
   const bg = isEmergency ? "#FFF8F9" : isOut ? "#FFFBF5" : "#F4FDF7";
 
   return (
-    <View style={[styles.alertRow, { backgroundColor: bg }]}>
+    <View
+      style={[
+        styles.alertRow,
+        {
+          backgroundColor: bg,
+          borderBottomColor: `${color}25`,
+          borderBottomWidth: isLast ? 0 : 1,
+        },
+      ]}
+    >
       <View style={[styles.alertTypeBadge, { backgroundColor: color }]}>
         <Text style={styles.alertTypeBadgeText}>{label}</Text>
       </View>
@@ -391,9 +427,53 @@ function LocationAlertCard({
   );
 }
 
-function DeviceCard({ device }: { device: DeviceStatus }) {
+function DeviceListCard({ devices }: { devices: DeviceStatus[] }) {
+  if (devices.length === 0) {
+    return (
+      <View style={styles.emptyDeviceCard}>
+        <Ionicons name="watch-outline" size={24} color="#94A3B8" />
+        <Text style={styles.emptyDeviceTitle}>대상자 없음</Text>
+        <Text style={styles.emptyDeviceText}>등록된 웨어러블 기기 대상자가 없습니다.</Text>
+      </View>
+    );
+  }
+
   return (
-    <View style={[styles.deviceCard, styles.lightShadow]}>
+    <View style={styles.deviceListCard}>
+      <ScrollView
+        style={styles.deviceListScroll}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={devices.length > 2}
+        contentContainerStyle={styles.deviceListContent}
+      >
+        {devices.map((device, index) => (
+          <DeviceCard
+            key={device.id}
+            device={device}
+            isLast={index === devices.length - 1}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function DeviceCard({
+  device,
+  isLast,
+}: {
+  device: DeviceStatus;
+  isLast: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.deviceRow,
+        {
+          borderBottomWidth: isLast ? 0 : 1,
+        },
+      ]}
+    >
       <View style={[styles.deviceIconCircle, !device.connected && styles.deviceIconOff]}>
         <Ionicons
           name="watch-outline"
@@ -444,7 +524,6 @@ function BioTab({
         styles.bioTab,
         active && {
           borderBottomColor: color,
-          backgroundColor: color === "#F59E0B" ? "#FFFBEB" : "#FFF7F8",
         },
       ]}
       onPress={onPress}
@@ -462,15 +541,26 @@ function BioTab({
 function BioAlertCard({
   item,
   bioTab,
+  isLast,
 }: {
   item: BioAlert;
   bioTab: BioTabType;
+  isLast: boolean;
 }) {
   const badgeColor = bioTab === "heart" ? "#FF2F45" : "#F59E0B";
   const bg = bioTab === "heart" ? "#FFF8F9" : "#FFFBEB";
 
   return (
-    <View style={[styles.alertRow, { backgroundColor: bg }]}>
+    <View
+      style={[
+        styles.alertRow,
+        {
+          backgroundColor: bg,
+          borderBottomColor: `${badgeColor}25`,
+          borderBottomWidth: isLast ? 0 : 1,
+        },
+      ]}
+    >
       <View style={[styles.alertTypeBadge, { backgroundColor: badgeColor }]}>
         <Text style={styles.alertTypeBadgeText}>
           {bioTab === "heart" ? "심박" : "움직임"}
@@ -510,14 +600,14 @@ const styles = StyleSheet.create({
 
   lightShadow: {
     shadowColor: "#64748B",
-    shadowOffset: { width: 0, height: 3 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
-    shadowRadius: 6,
+    shadowRadius: 9,
     elevation: 2,
   },
 
   tabBar: {
-    height: 50,
+    height: 48,
     backgroundColor: "#FFFFFF",
     flexDirection: "row",
     borderBottomWidth: 1,
@@ -525,7 +615,7 @@ const styles = StyleSheet.create({
   },
   mainTab: {
     flex: 1,
-    borderBottomWidth: 3,
+    borderBottomWidth: 2.5,
     borderBottomColor: "transparent",
   },
   mainTabOn: {
@@ -537,10 +627,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
+    gap: 4,
   },
   mainTabText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "800",
     color: "#64748B",
     textAlign: "center",
@@ -550,9 +640,8 @@ const styles = StyleSheet.create({
   },
 
   body: {
-    paddingHorizontal: 12,
-    paddingTop: 20,
-    paddingBottom: 28,
+    paddingHorizontal: 20,
+    paddingTop: 10,
   },
 
   locationGroup: {
@@ -563,15 +652,17 @@ const styles = StyleSheet.create({
   },
   locationBlockHeader: {
     minHeight: 32,
-    marginBottom: 9,
+    marginBottom: 7,
     paddingHorizontal: 2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginRight: 4,
   },
   locationBlockTitleRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
   },
   locationBlockTitle: {
     fontSize: 15,
@@ -579,17 +670,17 @@ const styles = StyleSheet.create({
     color: "#334155",
   },
   totalCountText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
     color: "#64748B",
   },
 
   locationListCard: {
-    height: 136,
+    height: 140,
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
     borderWidth: 1.2,
-    padding: 9,
+    overflow: "hidden",
     shadowColor: "#64748B",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
@@ -600,14 +691,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   locationListContent: {
-    gap: 8,
-    paddingRight: 2,
+    gap: 0,
+    paddingRight: 0,
   },
 
   alertRow: {
-    height: 55,
-    borderRadius: 14,
-    paddingHorizontal: 9,
+    height: 70,
+    paddingHorizontal: 15,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -658,7 +748,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 11,
+    marginTop: 5,
+    marginBottom: 13,
     paddingLeft: 2,
   },
   deviceTitle: {
@@ -666,16 +757,73 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#475569",
   },
-  deviceCard: {
-    minHeight: 70,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-    paddingHorizontal: 13,
-    marginBottom: 11,
+
+  eventTitleRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
+    marginTop: 22,
+    paddingLeft: 2,
+  },
+  eventTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#475569",
+  },
+
+  deviceListCard: {
+    height: 140,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    overflow: "hidden",
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 9,
+    elevation: 2,
+  },
+  deviceListScroll: {
+    flex: 1,
+  },
+  deviceListContent: {
+    gap: 0,
+    paddingRight: 0,
+  },
+  deviceRow: {
+    height: 70,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+  },
+  emptyDeviceCard: {
+    height: 140,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#64748B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 9,
+    elevation: 2,
+  },
+  emptyDeviceTitle: {
+    marginTop: 7,
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#334155",
+  },
+  emptyDeviceText: {
+    marginTop: 3,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#94A3B8",
   },
   deviceIconCircle: {
     width: 41,
@@ -719,7 +867,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#64748B",
     fontWeight: "700",
-    maxWidth: 92,
+    width: 120,
     textAlign: "right",
   },
 
@@ -737,15 +885,17 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   bioTabs: {
-    height: 44,
+    height: 46,
     flexDirection: "row",
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
   },
   bioTab: {
     flex: 1,
     borderBottomWidth: 3,
     borderBottomColor: "transparent",
+    backgroundColor: "#FFFFFF",
   },
   bioTabInner: {
     flex: 1,
@@ -764,9 +914,10 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   bioListCard: {
-    height: 136,
+    height: 140,
     backgroundColor: "#FFFFFF",
-    padding: 9,
+    padding: 0,
+    overflow: "hidden",
   },
   bioListScroll: {
     flex: 1,
