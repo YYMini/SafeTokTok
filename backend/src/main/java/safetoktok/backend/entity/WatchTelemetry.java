@@ -9,7 +9,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "watch_telemetry")
+@Table(name = "silver_watch_telemetry")
 public class WatchTelemetry {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

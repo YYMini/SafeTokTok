@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">SafeTokTok Watch</string>
-    <string name="default_server_url">http://10.0.2.2:8080/api/watch/telemetry</string>
+    <string name="default_server_url">https://safetoktok-production.up.railway.app/api/watch/telemetry</string>
 </resources>

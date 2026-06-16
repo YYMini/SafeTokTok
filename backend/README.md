@@ -30,7 +30,7 @@ $env:JPA_DDL_AUTO="update"
 .\gradlew.bat bootRun --args="--spring.profiles.active=railway"
 ```
 
-When this profile is active, watch telemetry is stored in the `watch_telemetry` table.
+When this profile is active, watch telemetry is stored in the `silver_watch_telemetry` table.
 
 ## Watch telemetry API
 
