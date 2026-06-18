@@ -36,6 +36,7 @@ const STORAGE_KEYS = {
   remember: "rememberMe",
   savedId: "savedLoginId",
   savedPw: "savedLoginPw",
+  permissionConsentPending: "permissionConsentPending",
 } as const;
 
 export default function SignupScreen() {
@@ -340,6 +341,10 @@ export default function SignupScreen() {
       await AsyncStorage.setItem(STORAGE_KEYS.accountRole, "guardian");
       await AsyncStorage.setItem(STORAGE_KEYS.currentUserId, String(createdId));
       await AsyncStorage.setItem(STORAGE_KEYS.currentUserRole, createdRole);
+      await AsyncStorage.setItem(
+        `${STORAGE_KEYS.permissionConsentPending}_user_${createdId}`,
+        "true",
+      );
       await AsyncStorage.setItem(
         STORAGE_KEYS.profile,
         JSON.stringify(profilePayload),

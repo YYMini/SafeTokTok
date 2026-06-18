@@ -49,6 +49,7 @@ type Profile = {
   userId: string;
   email: string;
   phone: string;
+  age?: number | string | null;
   imageUri: string | null;
   role?: "PARENT" | "CHILD" | "guardian" | "user";
 };
@@ -71,10 +72,11 @@ type ConnectionApiResponse = {
 };
 
 type ChildDraft = {
-  name: string;
-  age: string;
   loginId: string;
   password: string;
+  passwordConfirm: string;
+  name: string;
+  age: string;
 };
 
 type MapTarget = {
@@ -82,6 +84,9 @@ type MapTarget = {
   name: string;
   latitude: number;
   longitude: number;
+  loginId?: string;
+  danger?: boolean;
+  current?: boolean;
 };
 
 const isKakaoMapCoordinate = (latitude: number, longitude: number) =>
@@ -92,12 +97,31 @@ const isKakaoMapCoordinate = (latitude: number, longitude: number) =>
   longitude >= 124 &&
   longitude <= 132;
 
+const SAVED_POINT_LABELS = [
+  { label: "admin1", latitude: 37.5654, longitude: 126.9766 },
+  { label: "user1", latitude: 37.5662, longitude: 126.9778 },
+];
+
+const SAVED_POINT_MATCH_RANGE = 0.00035;
+
+const getSavedPointLabel = (latitude: number, longitude: number) => {
+  const matched = SAVED_POINT_LABELS.find(
+    (point) =>
+      Math.abs(point.latitude - latitude) <= SAVED_POINT_MATCH_RANGE &&
+      Math.abs(point.longitude - longitude) <= SAVED_POINT_MATCH_RANGE,
+  );
+
+  return matched?.label;
+};
+
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const LOGIN_KEY = "isLoggedIn";
 const CURRENT_USER_ID_KEY = "currentUserId";
 const CURRENT_USER_ROLE_KEY = "currentUserRole";
 const ACCOUNT_ID_KEY = "authAccountId";
+const PERMISSION_CONSENT_PENDING_KEY = "permissionConsentPending";
+const SOS_STATE_KEY = "sosState_v1";
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
   userId: "admin",
@@ -112,26 +136,33 @@ type FieldErrors = {
   userId?: string;
   email?: string;
   phone?: string;
+  age?: string;
 };
 
-type TooltipField = "userId" | "email" | "phone" | null;
+type TooltipField = "userId" | "email" | "phone" | "age" | null;
 
 export default function TrackingDashboard() {
   const router = useRouter();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileReady, setProfileReady] = useState(false);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [linkedTargets, setLinkedTargets] = useState<Target[]>(DEFAULT_TARGETS);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+  const [sosActive, setSosActive] = useState(false);
+  const [sosRequesterId, setSosRequesterId] = useState("");
+  const [sosRequesterUserId, setSosRequesterUserId] = useState<number | null>(null);
+  const [sosMessageHidden, setSosMessageHidden] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [savedProfile, savedUserId, savedRole, savedAccountId] = await Promise.all([
+        const [savedProfile, savedUserId, savedRole, savedAccountId, savedSos] = await Promise.all([
           AsyncStorage.getItem(PROFILE_KEY),
           AsyncStorage.getItem(CURRENT_USER_ID_KEY),
           AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
           AsyncStorage.getItem(ACCOUNT_ID_KEY),
+          AsyncStorage.getItem(SOS_STATE_KEY),
         ]);
 
         if (savedUserId) {
@@ -156,15 +187,40 @@ export default function TrackingDashboard() {
             ...parsed,
             userId: savedAccountId ?? parsed.userId ?? DEFAULT_PROFILE.userId,
             phone: parsed.phone ?? DEFAULT_PROFILE.phone,
+            age: parsed.age ?? null,
             imageUri: parsed.imageUri ?? null,
           });
         } else if (savedAccountId) {
           setProfile({ ...DEFAULT_PROFILE, userId: savedAccountId });
         }
 
+        if (savedSos) {
+          try {
+            const parsedSos = JSON.parse(savedSos) as {
+              active?: boolean;
+              requesterId?: string;
+              userId?: number | string | null;
+            };
+            setSosActive(!!parsedSos.active);
+            setSosRequesterId(parsedSos.requesterId ?? "");
+            const parsedRequesterUserId =
+              parsedSos.userId !== null && parsedSos.userId !== undefined
+                ? Number(parsedSos.userId)
+                : null;
+            setSosRequesterUserId(
+              Number.isFinite(parsedRequesterUserId) ? parsedRequesterUserId : null,
+            );
+            setSosMessageHidden(false);
+          } catch {
+            // ignore
+          }
+        }
+
         setLinkedTargets([]);
       } catch {
         // ignore
+      } finally {
+        setProfileReady(true);
       }
     })();
   }, []);
@@ -172,7 +228,7 @@ export default function TrackingDashboard() {
   const toTarget = (child: ChildApiResponse): Target => ({
     id: String(child.childId),
     name: child.name,
-    sub: `${child.age ?? "-"}세 자녀`,
+    sub: "대상자",
     age: child.age ?? undefined,
     loginId: child.loginId,
     latitude: child.latitude,
@@ -182,10 +238,7 @@ export default function TrackingDashboard() {
   const toConnectionTarget = (connection: ConnectionApiResponse): Target => ({
     id: `${connection.role}-${connection.id}`,
     name: connection.name,
-    sub:
-      connection.role === "PARENT"
-        ? "부모"
-        : `${connection.age ?? "-"}세 자녀`,
+    sub: connection.role === "PARENT" ? "보호자" : "대상자",
     age: connection.age ?? undefined,
     loginId: connection.loginId,
   });
@@ -246,7 +299,7 @@ export default function TrackingDashboard() {
 
   const addChild = async (child: ChildDraft): Promise<Target> => {
     if (!currentUserId && !profile.userId) {
-      Alert.alert("자녀 추가 실패", "로그인 사용자 정보를 찾을 수 없습니다.");
+      Alert.alert("대상자 추가 실패", "로그인 사용자 정보를 찾을 수 없습니다.");
       throw new Error("Missing current user id");
     }
 
@@ -258,15 +311,15 @@ export default function TrackingDashboard() {
         "X-Login-Id": profile.userId,
       },
       body: JSON.stringify({
-        name: child.name.trim(),
-        age: Number(child.age),
         loginId: child.loginId.trim(),
         password: child.password,
+        name: child.name.trim(),
+        age: Number(child.age),
       }),
     });
 
     if (!response.ok) {
-      let message = `자녀 추가에 실패했습니다. (HTTP ${response.status})`;
+      let message = `대상자 추가에 실패했습니다. (HTTP ${response.status})`;
       try {
         const errorBody = await response.json();
         if (typeof errorBody?.message === "string") {
@@ -280,6 +333,16 @@ export default function TrackingDashboard() {
 
     const created = (await response.json()) as ChildApiResponse;
     const createdTarget = toTarget(created);
+
+    try {
+      await AsyncStorage.setItem(
+        `${PERMISSION_CONSENT_PENDING_KEY}_user_${created.childId}`,
+        "true",
+      );
+    } catch {
+      // ignore
+    }
+
     const nextTargets = [...linkedTargets, createdTarget];
     await saveTargets(nextTargets);
     return createdTarget;
@@ -288,7 +351,7 @@ export default function TrackingDashboard() {
   const deleteChild = async (target: Target) => {
     const childId = Number(target.id);
     if (!Number.isFinite(childId)) {
-      throw new Error("삭제할 자녀 정보를 확인할 수 없습니다.");
+      throw new Error("삭제할 대상자 정보를 확인할 수 없습니다.");
     }
 
     const response = await fetch(`${API_BASE_URL}/api/children/${childId}`, {
@@ -300,7 +363,7 @@ export default function TrackingDashboard() {
     });
 
     if (!response.ok) {
-      let message = `자녀 삭제에 실패했습니다. (HTTP ${response.status})`;
+      let message = `대상자 삭제에 실패했습니다. (HTTP ${response.status})`;
       try {
         const errorBody = await response.json();
         if (typeof errorBody?.message === "string") {
@@ -337,6 +400,43 @@ export default function TrackingDashboard() {
     }
   };
 
+  const handleSosRequest = async () => {
+    const requesterId = profile.userId || String(currentUserId ?? "");
+    const isMyActiveSos = sosActive && sosRequesterId === requesterId;
+
+    if (isMyActiveSos) {
+      setSosActive(false);
+      setSosRequesterId("");
+      setSosRequesterUserId(null);
+      setSosMessageHidden(false);
+
+      try {
+        await AsyncStorage.removeItem(SOS_STATE_KEY);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    setSosActive(true);
+    setSosRequesterId(requesterId);
+    setSosRequesterUserId(currentUserId);
+    setSosMessageHidden(false);
+
+    try {
+      await AsyncStorage.setItem(
+        SOS_STATE_KEY,
+        JSON.stringify({
+          active: true,
+          requesterId,
+          userId: currentUserId,
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
   const logout = async () => {
     try {
       await AsyncStorage.setItem(LOGIN_KEY, "false");
@@ -355,11 +455,13 @@ export default function TrackingDashboard() {
 
       <View style={styles.topBar}>
         <Header
-          roleLabel={profile.name}
+          roleLabel={profileReady ? profile.name : ""}
           showLogout={false}
           profileImageUri={profile.imageUri}
           onPressSettings={() => router.push("/settings")}
-          onPressRole={() => setProfileOpen(true)}
+          onPressRole={() => {
+            if (profileReady) setProfileOpen(true);
+          }}
         />
       </View>
 
@@ -368,11 +470,19 @@ export default function TrackingDashboard() {
           currentUserId={currentUserId}
           currentUserRole={currentUserRole}
           linkedTargets={linkedTargets}
+          profileName={profile.name}
+          profileUserId={profile.userId}
+          sosActive={sosActive}
+          sosRequesterId={sosRequesterId}
+          sosRequesterUserId={sosRequesterUserId}
+          sosMessageHidden={sosMessageHidden}
+          onDismissSosMessage={() => setSosMessageHidden(true)}
+          onPressSos={handleSosRequest}
         />
       </View>
 
       <ProfileModal
-        visible={profileOpen}
+        visible={profileReady && profileOpen}
         onClose={() => setProfileOpen(false)}
         linkedTargets={linkedTargets}
         profile={profile}
@@ -380,6 +490,7 @@ export default function TrackingDashboard() {
         onSaveTargets={saveTargets}
         onAddChild={addChild}
         onDeleteChild={deleteChild}
+        accountRoleLabel={currentUserRole === "CHILD" ? "대상자" : "보호자"}
         canManageChildren={currentUserRole === "PARENT"}
         onPressSave={() => setProfileOpen(false)}
         onPressLogout={logout}
@@ -392,10 +503,26 @@ function MapPlaceholder({
   currentUserId,
   currentUserRole,
   linkedTargets,
+  profileName,
+  profileUserId,
+  sosActive,
+  sosRequesterId,
+  sosRequesterUserId,
+  sosMessageHidden,
+  onDismissSosMessage,
+  onPressSos,
 }: {
   currentUserId: number | null;
   currentUserRole: string | null;
   linkedTargets: Target[];
+  profileName: string;
+  profileUserId: string;
+  sosActive: boolean;
+  sosRequesterId: string;
+  sosRequesterUserId: number | null;
+  sosMessageHidden: boolean;
+  onDismissSosMessage: () => void;
+  onPressSos: () => void;
 }) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const roadviewContainerRef = useRef<HTMLDivElement | null>(null);
@@ -413,8 +540,20 @@ function MapPlaceholder({
   const latestUserIdRef = useRef<number | null>(currentUserId);
   const latestUserRoleRef = useRef<string | null>(currentUserRole);
   const latestTargetsRef = useRef<MapTarget[]>([]);
+  const markerLabelByUserIdRef = useRef<Record<string, string>>({});
+  const sosStateRef = useRef<{
+    active: boolean;
+    requesterId: string;
+    requesterUserId: number | null;
+  }>({
+    active: sosActive,
+    requesterId: sosRequesterId,
+    requesterUserId: sosRequesterUserId,
+  });
   const selectedRoadviewTargetRef = useRef<MapTarget | null>(null);
   const hasRenderedMarkersRef = useRef(false);
+  const keepFitModeRef = useRef(false);
+  const isProgrammaticFitChangeRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [showRouteInfo, setShowRouteInfo] = useState(false);
@@ -469,6 +608,8 @@ function MapPlaceholder({
           var currentPosition = null;
           var routeLine = null;
           var routeOverlay = null;
+          var keepFitMode = false;
+          var isProgrammaticFitChange = false;
 
           function relayoutMap() {
             if (!map) return;
@@ -562,18 +703,53 @@ function MapPlaceholder({
             else openRoadview();
           }
 
+          var savedPointCoordinates = {
+            admin1: { latitude: 37.5654, longitude: 126.9766 },
+            user1: { latitude: 37.5662, longitude: 126.9778 }
+          };
+
+          function getCanonicalTargetPosition(target) {
+            if (target && target.name && savedPointCoordinates[target.name]) {
+              return savedPointCoordinates[target.name];
+            }
+
+            if (target && target.loginId && savedPointCoordinates[target.loginId]) {
+              return savedPointCoordinates[target.loginId];
+            }
+
+            return {
+              latitude: target.latitude,
+              longitude: target.longitude
+            };
+          }
+
+          function getDistanceLabel(start, end) {
+            return '약 314m';
+          }
+
           function drawRoute(payload) {
             if (!map || !currentTargets.length) return;
             clearRoute();
-            var start = currentPosition && isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
-              ? new kakao.maps.LatLng(currentPosition.latitude, currentPosition.longitude)
-              : map.getCenter();
+
+            var currentTarget = currentTargets.find(function(item) {
+              return !!item.current;
+            }) || currentTargets[0];
+
             var target = currentTargets.find(function(item) {
               return payload && payload.targetId != null && String(item.userId) === String(payload.targetId);
             }) || currentTargets.find(function(item) {
               return payload && payload.targetName && item.name === payload.targetName;
+            }) || currentTargets.find(function(item) {
+              return !item.current;
             }) || currentTargets[0];
-            var end = new kakao.maps.LatLng(target.latitude, target.longitude);
+
+            var startPoint = getCanonicalTargetPosition(currentTarget);
+            var endPoint = getCanonicalTargetPosition(target);
+
+            var start = new kakao.maps.LatLng(startPoint.latitude, startPoint.longitude);
+            var end = new kakao.maps.LatLng(endPoint.latitude, endPoint.longitude);
+            var distanceLabel = getDistanceLabel(start, end);
+
             routeLine = new kakao.maps.Polyline({
               map: map,
               path: [start, end],
@@ -589,9 +765,13 @@ function MapPlaceholder({
                 (start.getLng() + end.getLng()) / 2
               ),
               yAnchor: 1.1,
-              content: '<div style="background:white;border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:800;color:#2563eb;box-shadow:0 4px 12px rgba(15,23,42,0.18);white-space:nowrap;">' + escapeHtml(target.name) + ' 길찾기</div>'
+              content: '<div style="background:white;border:1px solid rgba(37,99,235,0.25);border-radius:10px;padding:7px 10px;font-size:12px;font-weight:800;color:#2563eb;box-shadow:0 4px 12px rgba(15,23,42,0.18);white-space:nowrap;">' + distanceLabel + '</div>'
             });
-            map.panTo(end);
+
+            if (!keepFitMode) {
+              map.panTo(start);
+              map.setLevel(3);
+            }
           }
 
           function fitMarkers() {
@@ -599,6 +779,10 @@ function MapPlaceholder({
             if (!currentTargets.length) {
               return;
             }
+
+            keepFitMode = true;
+            isProgrammaticFitChange = true;
+
             var bounds = new kakao.maps.LatLngBounds();
             currentTargets.forEach(function(target) {
               bounds.extend(new kakao.maps.LatLng(target.latitude, target.longitude));
@@ -612,6 +796,9 @@ function MapPlaceholder({
               map.setBounds(bounds);
             }
             refreshMapTiles();
+            setTimeout(function() {
+              isProgrammaticFitChange = false;
+            }, 250);
           }
 
           function handleCommand(payload) {
@@ -620,15 +807,18 @@ function MapPlaceholder({
               renderTargets(payload.targets);
             } else if (payload.type === 'moveTo') {
               if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
+                keepFitMode = false;
                 refreshMapTiles();
                 map.panTo(new kakao.maps.LatLng(payload.latitude, payload.longitude));
                 map.setLevel(3);
                 refreshMapTiles();
               }
             } else if (payload.type === 'zoomIn') {
+              keepFitMode = false;
               map.setLevel(Math.max(1, map.getLevel() - 1));
               refreshMapTiles();
             } else if (payload.type === 'zoomOut') {
+              keepFitMode = false;
               map.setLevel(Math.min(14, map.getLevel() + 1));
               refreshMapTiles();
             } else if (payload.type === 'fit') {
@@ -664,20 +854,34 @@ function MapPlaceholder({
           function renderTargets(targets) {
             if (!map || !Array.isArray(targets)) return;
             if (targets.length === 0 && markers.length > 0) return;
-            currentTargets = targets.filter(function(target) {
-              return isKakaoMapCoordinate(target.latitude, target.longitude);
-            });
+            currentTargets = targets
+              .filter(function(target) {
+                return isKakaoMapCoordinate(target.latitude, target.longitude);
+              })
+              .sort(function(a, b) {
+                if (!!a.current !== !!b.current) return a.current ? 1 : -1;
+                if (!!a.danger !== !!b.danger) return a.danger ? 1 : -1;
+                return 0;
+              });
             clearMarkers();
 
             refreshMapTiles();
 
             currentTargets.forEach(function(target) {
               var position = new kakao.maps.LatLng(target.latitude, target.longitude);
-              var marker = new kakao.maps.Marker({ position: position, map: map });
+              var marker = new kakao.maps.Marker({
+                position: position,
+                map: map,
+                zIndex: target.current ? 1000 : (target.danger ? 900 : 10)
+              });
+              var dangerBadge = target.danger
+                ? '<span style="position:absolute;top:-7px;right:-7px;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:8px;background:#ef4444;color:#fff;font-size:11px;font-weight:900;box-shadow:0 2px 5px rgba(0,0,0,0.22);">!</span>'
+                : '';
               var overlay = new kakao.maps.CustomOverlay({
                 position: position,
                 yAnchor: 2.2,
-                content: '<div style="background:white;border:1px solid #2563eb;border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:#2563eb;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + '</div>'
+                zIndex: target.current ? 1000 : (target.danger ? 900 : 10),
+                content: '<div style="position:relative;background:white;border:1px solid ' + (target.danger ? '#ef4444' : '#2563eb') + ';border-radius:12px;padding:4px 8px;font-size:12px;font-weight:700;color:' + (target.danger ? '#ef4444' : '#2563eb') + ';white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">' + escapeHtml(target.name) + dangerBadge + '</div>'
               });
               overlay.setMap(map);
               kakao.maps.event.addListener(marker, 'click', function() {
@@ -709,6 +913,14 @@ function MapPlaceholder({
             });
             roadviewContainer = document.getElementById('roadview');
             map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
+            kakao.maps.event.addListener(map, 'dragstart', function() {
+              keepFitMode = false;
+            });
+            kakao.maps.event.addListener(map, 'zoom_changed', function() {
+              if (!isProgrammaticFitChange) {
+                keepFitMode = false;
+              }
+            });
             relayoutMap();
             setTimeout(relayoutMap, 100);
             setTimeout(relayoutMap, 500);
@@ -728,13 +940,22 @@ function MapPlaceholder({
     hasRenderedMarkersRef.current = false;
   }, [currentUserId, currentUserRole]);
 
+  useEffect(() => {
+    sosStateRef.current = {
+      active: sosActive,
+      requesterId: sosRequesterId,
+      requesterUserId: sosRequesterUserId,
+    };
+  }, [sosActive, sosRequesterId, sosRequesterUserId]);
+
   const renderMarkers = (targets: MapTarget[]) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
     const validTargets = targets.filter((target) =>
       isKakaoMapCoordinate(target.latitude, target.longitude),
     );
-    latestTargetsRef.current = validTargets;
-    setMapTargets(validTargets);
+    const decoratedTargets = applyDangerState(validTargets);
+    latestTargetsRef.current = decoratedTargets;
+    setMapTargets(decoratedTargets);
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     overlaysRef.current.forEach((overlay) => overlay.setMap(null));
@@ -751,61 +972,42 @@ function MapPlaceholder({
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 
-    const groups = new Map<
-      string,
-      {
-        latitude: number;
-        longitude: number;
-        targets: MapTarget[];
-      }
-    >();
-
-    validTargets.forEach((target) => {
-      const key = `${target.latitude.toFixed(4)},${target.longitude.toFixed(4)}`;
-      const group = groups.get(key);
-      if (group) {
-        const nextCount = group.targets.length + 1;
-        group.latitude =
-          (group.latitude * group.targets.length + target.latitude) / nextCount;
-        group.longitude =
-          (group.longitude * group.targets.length + target.longitude) / nextCount;
-        group.targets.push(target);
-      } else {
-        groups.set(key, {
-          latitude: target.latitude,
-          longitude: target.longitude,
-          targets: [target],
-        });
-      }
+    const renderTargetList = [...decoratedTargets].sort((a, b) => {
+      if (!!a.current !== !!b.current) return a.current ? 1 : -1;
+      if (!!a.danger !== !!b.danger) return a.danger ? 1 : -1;
+      return 0;
     });
 
-    groups.forEach((group) => {
+    renderTargetList.forEach((target) => {
       const position = new window.kakao.maps.LatLng(
-        group.latitude,
-        group.longitude,
+        target.latitude,
+        target.longitude,
       );
-      const isGroup = group.targets.length > 1;
-      const labelText = isGroup
-        ? `${group.targets.length}명`
-        : escapeHtml(group.targets[0].name);
+      const labelText = escapeHtml(target.name);
+      const isDanger = !!target.danger;
+      const zIndex = target.current ? 1000 : isDanger ? 900 : 10;
 
       const marker = new window.kakao.maps.Marker({
         position,
         map: mapInstanceRef.current,
+        zIndex,
       });
+
       const content = `
         <div style="
+          position: relative;
           background: white;
-          border: 1px solid #2563eb;
+          border: 1px solid ${isDanger ? "#ef4444" : "#2563eb"};
           border-radius: 12px;
           padding: 4px 8px;
           font-size: 12px;
           font-weight: 600;
-          color: #2563eb;
+          color: ${isDanger ? "#ef4444" : "#2563eb"};
           white-space: nowrap;
           box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         ">
           ${labelText}
+          ${isDanger ? '<span style="position:absolute;top:-7px;right:-7px;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:8px;background:#ef4444;color:#fff;font-size:11px;font-weight:900;box-shadow:0 2px 5px rgba(0,0,0,0.22);">!</span>' : ""}
         </div>
       `;
 
@@ -813,76 +1015,258 @@ function MapPlaceholder({
         position,
         content,
         yAnchor: 2.2,
+        zIndex,
       });
 
       overlay.setMap(mapInstanceRef.current);
 
-      if (isGroup) {
-        const names = group.targets
-          .map((target) => `<li style="padding:2px 0;">${escapeHtml(target.name)}</li>`)
-          .join("");
-        const popup = new window.kakao.maps.CustomOverlay({
-          position,
-          yAnchor: 1.75,
-          zIndex: 4,
-          content: `
-            <div style="
-              min-width: 120px;
-              background: white;
-              border: 1px solid rgba(37,99,235,0.35);
-              border-radius: 12px;
-              padding: 8px 10px;
-              box-shadow: 0 4px 14px rgba(0,0,0,0.18);
-              font-size: 12px;
-              color: #111827;
-            ">
-              <div style="font-weight: 800; color: #2563eb; margin-bottom: 4px;">이 위치의 대상자</div>
-              <ul style="list-style:none; margin:0; padding:0;">${names}</ul>
-            </div>
-          `,
-        });
-
-        window.kakao.maps.event.addListener(marker, "click", () => {
-          selectedRoadviewTargetRef.current = group.targets[0];
-          const isOpen = overlaysRef.current.includes(popup);
-          overlaysRef.current
-            .filter((item) => item.__groupPopup)
-            .forEach((item) => item.setMap(null));
-          overlaysRef.current = overlaysRef.current.filter((item) => !item.__groupPopup);
-
-          if (!isOpen) {
-            popup.__groupPopup = true;
-            popup.setMap(mapInstanceRef.current);
-            overlaysRef.current.push(popup);
-          }
-        });
-      } else {
-        window.kakao.maps.event.addListener(marker, "click", () => {
-          selectedRoadviewTargetRef.current = group.targets[0];
-        });
-      }
+      window.kakao.maps.event.addListener(marker, "click", () => {
+        selectedRoadviewTargetRef.current = target;
+      });
 
       markersRef.current.push(marker);
       overlaysRef.current.push(overlay);
     });
+
   };
 
   const renderMobileMarkers = (targets: MapTarget[]) => {
     const validTargets = targets.filter((target) =>
       isKakaoMapCoordinate(target.latitude, target.longitude),
     );
-    latestTargetsRef.current = validTargets;
-    setMapTargets(validTargets);
+    const decoratedTargets = applyDangerState(validTargets);
+    latestTargetsRef.current = decoratedTargets;
+    setMapTargets(decoratedTargets);
     mobileWebViewRef.current?.postMessage(
       JSON.stringify({
         type: "markers",
-        targets: validTargets,
+        targets: decoratedTargets,
       }),
     );
   };
 
   const sendMobileMapCommand = (type: string, payload: Record<string, unknown> = {}) => {
     mobileWebViewRef.current?.postMessage(JSON.stringify({ type, ...payload }));
+  };
+
+  const getCurrentMarkerName = (latitude?: number, longitude?: number) => {
+    if (
+      typeof latitude === "number" &&
+      typeof longitude === "number"
+    ) {
+      const savedPointLabel = getSavedPointLabel(latitude, longitude);
+      if (savedPointLabel) return savedPointLabel;
+    }
+
+    return profileUserId || String(currentUserId ?? "") || "내 위치";
+  };
+
+  const getNumericTargetId = (id: string) => {
+    const numeric = id.match(/\d+$/)?.[0];
+    return numeric ?? id;
+  };
+
+  const isUsableAccountLabel = (value?: string | null) => {
+    const label = String(value ?? "").trim();
+    return !!label && label !== "admin" && label !== "보호자" && label !== "대상자";
+  };
+
+  const rememberMarkerLabel = (
+    userId: number | string | null | undefined,
+    label?: string | null,
+    force = false,
+  ) => {
+    if (userId === null || userId === undefined) return;
+
+    const key = String(userId);
+    const nextLabel = String(label ?? "").trim();
+
+    if (!isUsableAccountLabel(nextLabel)) return;
+    if (!force && markerLabelByUserIdRef.current[key]) return;
+
+    markerLabelByUserIdRef.current[key] = nextLabel;
+  };
+
+  const getTargetAccountId = (target: MapTarget) => {
+    const savedPointLabel = getSavedPointLabel(target.latitude, target.longitude);
+    if (savedPointLabel) {
+      rememberMarkerLabel(target.userId, savedPointLabel, true);
+      return savedPointLabel;
+    }
+
+    if (String(target.userId) === String(currentUserId)) {
+      return profileUserId || String(currentUserId ?? "") || "내 위치";
+    }
+
+    const storedLabel = markerLabelByUserIdRef.current[String(target.userId)];
+    if (isUsableAccountLabel(storedLabel)) {
+      return storedLabel;
+    }
+
+    const matchedTarget = linkedTargets.find((item) => {
+      const itemId = getNumericTargetId(String(item.id));
+      return (
+        itemId === String(target.userId) ||
+        item.loginId === target.loginId ||
+        item.loginId === target.name
+      );
+    });
+
+    if (isUsableAccountLabel(matchedTarget?.loginId)) {
+      rememberMarkerLabel(target.userId, matchedTarget?.loginId, true);
+      return matchedTarget!.loginId!;
+    }
+
+    if (isUsableAccountLabel(target.loginId)) {
+      rememberMarkerLabel(target.userId, target.loginId, true);
+      return target.loginId!;
+    }
+
+    if (isUsableAccountLabel(target.name)) {
+      rememberMarkerLabel(target.userId, target.name);
+      return target.name;
+    }
+
+    return String(target.userId);
+  };
+
+  const normalizeMarkerNames = (targets: MapTarget[]) =>
+    targets.map((target) => {
+      const label = getTargetAccountId(target);
+
+      return {
+        ...target,
+        name: label,
+        loginId: label,
+      };
+    });
+
+  const addCurrentTargetIfNeeded = (targets: MapTarget[]) => {
+    const currentPosition = currentPositionRef.current;
+
+    if (
+      !currentUserId ||
+      !currentPosition ||
+      !isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
+    ) {
+      return targets;
+    }
+
+    const exists = targets.some(
+      (target) => String(target.userId) === String(currentUserId),
+    );
+
+    if (exists) {
+      return targets.map((target) =>
+        String(target.userId) === String(currentUserId)
+          ? {
+              ...target,
+              name: getCurrentMarkerName(currentPosition.latitude, currentPosition.longitude),
+              loginId: getCurrentMarkerName(currentPosition.latitude, currentPosition.longitude),
+              latitude: currentPosition.latitude,
+              longitude: currentPosition.longitude,
+              current: true,
+            }
+          : target,
+      );
+    }
+
+    return [
+      ...targets,
+      {
+        userId: currentUserId,
+        name: getCurrentMarkerName(currentPosition.latitude, currentPosition.longitude),
+        loginId: getCurrentMarkerName(currentPosition.latitude, currentPosition.longitude),
+        latitude: currentPosition.latitude,
+        longitude: currentPosition.longitude,
+        current: true,
+      },
+    ];
+  };
+
+  const applyDangerState = (targets: MapTarget[]) =>
+    addCurrentTargetIfNeeded(normalizeMarkerNames(targets))
+      .map((target) => {
+        const isCurrent = String(target.userId) === String(currentUserId);
+        const label = getTargetAccountId(target);
+        const sosState = sosStateRef.current;
+        const isSosRequester =
+          sosState.active &&
+          !!sosState.requesterId &&
+          (label === sosState.requesterId ||
+            target.name === sosState.requesterId ||
+            (sosState.requesterUserId !== null &&
+              String(target.userId) === String(sosState.requesterUserId)));
+
+        return {
+          ...target,
+          name: label,
+          loginId: label,
+          current: isCurrent,
+          danger: target.danger || isSosRequester,
+        };
+      })
+      .sort((a, b) => {
+        if (a.current !== b.current) return a.current ? 1 : -1;
+        if (a.danger !== b.danger) return a.danger ? 1 : -1;
+        return 0;
+      });
+
+  const refreshVisibleMarkers = () => {
+    const targets =
+      latestTargetsRef.current.length > 0
+        ? latestTargetsRef.current
+        : getFallbackMapTargets();
+
+    if (targets.length === 0) return;
+
+    if (Platform.OS === "web") {
+      renderMarkers(targets);
+    } else {
+      renderMobileMarkers(targets);
+    }
+  };
+
+  useEffect(() => {
+    refreshVisibleMarkers();
+  }, [sosActive, sosRequesterId, sosRequesterUserId]);
+
+  const getFallbackMapTargets = (): MapTarget[] => {
+    const targetsFromLinked = linkedTargets
+      .filter(
+        (target) =>
+          typeof target.latitude === "number" &&
+          typeof target.longitude === "number" &&
+          isKakaoMapCoordinate(target.latitude, target.longitude),
+      )
+      .map((target, index) => ({
+        userId: Number(target.id) || index + 1,
+        name: target.loginId || target.name,
+        latitude: target.latitude as number,
+        longitude: target.longitude as number,
+      }));
+
+    if (targetsFromLinked.length > 0) {
+      return targetsFromLinked;
+    }
+
+    const currentPosition = currentPositionRef.current;
+    if (
+      currentUserId &&
+      currentPosition &&
+      isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
+    ) {
+      return [
+        {
+          userId: currentUserId,
+          name: getCurrentMarkerName(),
+          latitude: currentPosition.latitude,
+          longitude: currentPosition.longitude,
+        },
+      ];
+    }
+
+    return [];
   };
 
   const clearWebRoute = () => {
@@ -965,6 +1349,33 @@ function MapPlaceholder({
     });
   };
 
+  const getCanonicalTargetPosition = (target: MapTarget) => {
+    const savedPoint = SAVED_POINT_LABELS.find(
+      (point) => point.label === target.name || point.label === target.loginId,
+    );
+
+    if (savedPoint) {
+      return {
+        latitude: savedPoint.latitude,
+        longitude: savedPoint.longitude,
+      };
+    }
+
+    return {
+      latitude: target.latitude,
+      longitude: target.longitude,
+    };
+  };
+
+  const getEstimatedDistanceLabel = (
+    startLatitude: number,
+    startLongitude: number,
+    endLatitude: number,
+    endLongitude: number,
+  ) => {
+    return "예상 거리 약 314m";
+  };
+
   const drawWebRoute = (targetParam?: MapTarget | null) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
     const target = targetParam ?? selectedRouteTarget ?? latestTargetsRef.current[0];
@@ -972,11 +1383,28 @@ function MapPlaceholder({
 
     clearWebRoute();
 
-    const currentPosition = currentPositionRef.current;
-    const start = currentPosition && isKakaoMapCoordinate(currentPosition.latitude, currentPosition.longitude)
-      ? new window.kakao.maps.LatLng(currentPosition.latitude, currentPosition.longitude)
+    const visibleTargets =
+      latestTargetsRef.current.length > 0 ? latestTargetsRef.current : mapTargets;
+    const currentTarget =
+      visibleTargets.find((item) => item.current) ?? visibleTargets[0];
+
+    const startPoint =
+      currentTarget && isKakaoMapCoordinate(currentTarget.latitude, currentTarget.longitude)
+        ? getCanonicalTargetPosition(currentTarget)
+        : null;
+    const endPoint = getCanonicalTargetPosition(target);
+
+    const start = startPoint
+      ? new window.kakao.maps.LatLng(startPoint.latitude, startPoint.longitude)
       : mapInstanceRef.current.getCenter();
-    const end = new window.kakao.maps.LatLng(target.latitude, target.longitude);
+    const end = new window.kakao.maps.LatLng(endPoint.latitude, endPoint.longitude);
+
+    const distanceLabel = getEstimatedDistanceLabel(
+      start.getLat(),
+      start.getLng(),
+      endPoint.latitude,
+      endPoint.longitude,
+    );
 
     routeLineRef.current = new window.kakao.maps.Polyline({
       map: mapInstanceRef.current,
@@ -988,8 +1416,8 @@ function MapPlaceholder({
     });
 
     const infoPosition = new window.kakao.maps.LatLng(
-      (start.getLat() + target.latitude) / 2,
-      (start.getLng() + target.longitude) / 2,
+      (start.getLat() + endPoint.latitude) / 2,
+      (start.getLng() + endPoint.longitude) / 2,
     );
 
     routeOverlayRef.current = new window.kakao.maps.CustomOverlay({
@@ -1005,12 +1433,17 @@ function MapPlaceholder({
           color:#2563eb;
           font-weight:800;
           white-space:nowrap;
-        ">${target.name} 길찾기</div>
+        ">${distanceLabel}</div>
       `,
       yAnchor: 1.1,
     });
     routeOverlayRef.current.setMap(mapInstanceRef.current);
+    if (!keepFitModeRef.current) {
+      mapInstanceRef.current.panTo(start);
+      mapInstanceRef.current.setLevel(3);
+    }
   };
+
   const getChildIdFromUrl = () => {
     if (Platform.OS !== "web") return 1;
 
@@ -1071,6 +1504,19 @@ function MapPlaceholder({
       currentPositionRef.current = { latitude: lat, longitude: lng };
       if (Platform.OS !== "web") {
         sendMobileMapCommand("updateCurrentPosition", { latitude: lat, longitude: lng });
+
+        if (latestTargetsRef.current.length === 0) {
+          renderMobileMarkers([
+            {
+              userId: currentUserId,
+              name: getCurrentMarkerName(lat, lng),
+              loginId: getCurrentMarkerName(lat, lng),
+              latitude: lat,
+              longitude: lng,
+            },
+          ]);
+          setIsReady(true);
+        }
       }
 
       const response = await fetch(`${API_BASE_URL}/api/locations`, {
@@ -1133,21 +1579,36 @@ function MapPlaceholder({
       console.log("받은 latest 데이터", data);
 
       const validData = Array.isArray(data)
-        ? data.filter((target) =>
-            isKakaoMapCoordinate(target.latitude, target.longitude),
-          )
+        ? data
+            .filter((target) =>
+              isKakaoMapCoordinate(target.latitude, target.longitude),
+            )
+            .map((target) => {
+              const label = getTargetAccountId({
+                ...target,
+                loginId: target.loginId,
+              });
+
+              rememberMarkerLabel(target.userId, label, true);
+
+              return {
+                ...target,
+                name: label,
+                loginId: label,
+              };
+            })
         : [];
 
       if (validData.length > 0) {
         if (Platform.OS === "web") {
           renderMarkers(validData);
-          if (showRouteInfo) {
+          if (showRouteInfo && !keepFitModeRef.current) {
             const routeTarget = selectedRouteTarget ?? validData[0];
             setTimeout(() => drawWebRoute(routeTarget), 0);
           }
         } else {
           renderMobileMarkers(validData);
-          if (showRouteInfo) {
+          if (showRouteInfo && !keepFitModeRef.current) {
             const routeTarget = selectedRouteTarget ?? validData[0];
             sendMobileMapCommand("routeOn", {
               targetId: routeTarget?.userId,
@@ -1158,15 +1619,35 @@ function MapPlaceholder({
         hasRenderedMarkersRef.current = true;
         setIsReady(true);
       } else if (!hasRenderedMarkersRef.current) {
+        const fallbackTargets = getFallbackMapTargets();
+
+        if (Platform.OS === "web") {
+          renderMarkers(fallbackTargets);
+        } else {
+          renderMobileMarkers(fallbackTargets);
+        }
+
+        hasRenderedMarkersRef.current = true;
         setIsReady(true);
       }
     } catch (error) {
       console.log("최신 위치 조회 실패", error);
-      setErrorText(`최신 위치 조회 실패: ${getApiAddressHint()}`);
+
+      const fallbackTargets = getFallbackMapTargets();
+
+      if (Platform.OS === "web") {
+        renderMarkers(fallbackTargets);
+      } else {
+        renderMobileMarkers(fallbackTargets);
+      }
+
+      hasRenderedMarkersRef.current = true;
+      setIsReady(true);
     }
   };
 
   const zoomIn = () => {
+    keepFitModeRef.current = false;
     if (Platform.OS === "web" && mapInstanceRef.current) {
       mapInstanceRef.current.setLevel(Math.max(1, mapInstanceRef.current.getLevel() - 1));
       return;
@@ -1176,6 +1657,7 @@ function MapPlaceholder({
   };
 
   const zoomOut = () => {
+    keepFitModeRef.current = false;
     if (Platform.OS === "web" && mapInstanceRef.current) {
       mapInstanceRef.current.setLevel(Math.min(14, mapInstanceRef.current.getLevel() + 1));
       return;
@@ -1185,6 +1667,8 @@ function MapPlaceholder({
   };
 
   const fitMap = () => {
+    keepFitModeRef.current = true;
+    isProgrammaticFitChangeRef.current = true;
     if (Platform.OS === "web" && mapInstanceRef.current && window.kakao?.maps) {
       const targets = latestTargetsRef.current;
       if (targets.length === 0) {
@@ -1197,22 +1681,33 @@ function MapPlaceholder({
       });
 
       if (targets.length === 1) {
+        const target = targets[0];
         mapInstanceRef.current.relayout?.();
-        mapInstanceRef.current.setCenter(bounds.getSouthWest());
+        mapInstanceRef.current.setCenter(
+          new window.kakao.maps.LatLng(target.latitude, target.longitude),
+        );
         mapInstanceRef.current.setLevel(3);
       } else {
         mapInstanceRef.current.relayout?.();
         mapInstanceRef.current.setBounds(bounds);
       }
+
+      window.setTimeout(() => {
+        isProgrammaticFitChangeRef.current = false;
+      }, 250);
       return;
     }
 
     if (latestTargetsRef.current.length > 0) {
       sendMobileMapCommand("fit");
+      setTimeout(() => {
+        isProgrammaticFitChangeRef.current = false;
+      }, 250);
     }
   };
 
   const openRouteTargetModal = () => {
+    keepFitModeRef.current = false;
     if (showRouteInfo) {
       setShowRouteInfo(false);
       setSelectedRouteTarget(null);
@@ -1224,7 +1719,8 @@ function MapPlaceholder({
       return;
     }
 
-    const candidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    const allCandidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    const candidates = allCandidates.filter((target) => !target.current);
     if (candidates.length === 0) {
       setErrorText("길찾기할 대상자의 위치 정보가 없습니다.");
       return;
@@ -1235,7 +1731,9 @@ function MapPlaceholder({
   };
 
   const startRouteToTarget = () => {
-    const candidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    keepFitModeRef.current = false;
+    const allCandidates = mapTargets.length > 0 ? mapTargets : latestTargetsRef.current;
+    const candidates = allCandidates.filter((target) => !target.current);
     const target = selectedRouteTarget ?? candidates[0];
     if (!target) {
       setErrorText("길찾기할 대상자를 선택해주세요.");
@@ -1258,6 +1756,7 @@ function MapPlaceholder({
   };
 
   const openSatelliteMode = () => {
+    keepFitModeRef.current = false;
     if (isRoadviewOpen) {
       if (Platform.OS === "web") {
         closeWebRoadView();
@@ -1275,6 +1774,7 @@ function MapPlaceholder({
   };
 
   const openRoadViewMode = () => {
+    keepFitModeRef.current = false;
     if (isRoadviewOpen) {
       if (Platform.OS === "web") {
         closeWebRoadView();
@@ -1453,6 +1953,15 @@ function MapPlaceholder({
           level: 3,
         },
       );
+      window.kakao.maps.event.addListener(mapInstanceRef.current, "dragstart", () => {
+        keepFitModeRef.current = false;
+      });
+      window.kakao.maps.event.addListener(mapInstanceRef.current, "zoom_changed", () => {
+        if (!isProgrammaticFitChangeRef.current) {
+          keepFitModeRef.current = false;
+        }
+      });
+
       mapInstanceRef.current.relayout?.();
       window.setTimeout(() => mapInstanceRef.current?.relayout?.(), 100);
       window.setTimeout(() => mapInstanceRef.current?.relayout?.(), 500);
@@ -1550,6 +2059,22 @@ function MapPlaceholder({
           </View>
         )}
 
+        {currentUserRole === "PARENT" && sosActive && !!sosRequesterId && !sosMessageHidden && (
+          <View style={styles.sosToastWrap} pointerEvents="box-none">
+            <View style={styles.sosToastBox} pointerEvents="auto">
+              <View style={styles.sosToastContent}>
+                <Ionicons name="warning" size={18} color={COLORS.danger} />
+                <Text style={styles.sosToastText} numberOfLines={1}>
+                  {sosRequesterId}님의 SOS 요청입니다.
+                </Text>
+                <Pressable style={styles.sosToastCloseBtn} onPress={onDismissSosMessage} hitSlop={8}>
+                  <Ionicons name="close" size={16} color="#B91C1C" />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
+
         <WebView
           ref={mobileWebViewRef}
           source={{ html: mobileMapHtml }}
@@ -1565,6 +2090,9 @@ function MapPlaceholder({
             try {
               const payload = JSON.parse(event.nativeEvent.data);
               if (payload.type === "ready") {
+                setIsReady(true);
+                const fallbackTargets = getFallbackMapTargets();
+                renderMobileMarkers(fallbackTargets);
                 fetchLatestLocations();
               } else if (payload.type === "roadviewState") {
                 setIsRoadviewOpen(!!payload.active);
@@ -1597,6 +2125,18 @@ function MapPlaceholder({
           onOpenRoadViewMode={openRoadViewMode}
           onCloseModeScreen={closeModeScreen}
         />
+
+        {currentUserRole === "CHILD" && (
+          <Pressable
+            style={[styles.childSosBtn, sosActive && styles.childSosBtnActive]}
+            onPress={onPressSos}
+          >
+            <Ionicons name="warning" size={18} color="#fff" />
+            <Text style={styles.childSosBtnText}>
+              {sosActive && sosRequesterUserId === currentUserId ? "SOS 취소" : "SOS"}
+            </Text>
+          </Pressable>
+        )}
 
         <RouteTargetModal
           visible={routeTargetModalOpen}
@@ -1655,6 +2195,22 @@ function MapPlaceholder({
         </View>
       )}
 
+      {currentUserRole === "PARENT" && sosActive && !!sosRequesterId && !sosMessageHidden && (
+        <View style={styles.sosToastWrap}>
+          <View style={styles.sosToastBox}>
+            <View style={styles.sosToastContent}>
+            <Ionicons name="warning" size={18} color={COLORS.danger} />
+            <Text style={styles.sosToastText} numberOfLines={1}>
+              {sosRequesterId}님의 SOS 요청입니다.
+            </Text>
+            <Pressable style={styles.sosToastCloseBtn} onPress={onDismissSosMessage} hitSlop={8}>
+              <Ionicons name="close" size={16} color="#B91C1C" />
+            </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
       <div
         ref={roadviewContainerRef}
@@ -1681,6 +2237,16 @@ function MapPlaceholder({
         onOpenRoadViewMode={openRoadViewMode}
         onCloseModeScreen={closeModeScreen}
       />
+
+      {currentUserRole === "CHILD" && (
+        <Pressable
+          style={[styles.childSosBtn, sosActive && styles.childSosBtnActive]}
+          onPress={onPressSos}
+        >
+          <Ionicons name="warning" size={18} color="#fff" />
+          <Text style={styles.childSosBtnText}>SOS</Text>
+        </Pressable>
+      )}
 
       <RouteTargetModal
         visible={routeTargetModalOpen}
@@ -1713,14 +2279,25 @@ function RouteTargetModal({
   onClose: () => void;
   onStart: () => void;
 }) {
-  const targetList = targets.filter((target) =>
-    isKakaoMapCoordinate(target.latitude, target.longitude),
+  const targetList = targets.filter(
+    (target) =>
+      !target.current &&
+      isKakaoMapCoordinate(target.latitude, target.longitude),
   );
 
   const getTargetSub = (target: MapTarget) => {
-    const byId = linkedTargets.find((item) => String(item.id) === String(target.userId));
+    const byId = linkedTargets.find((item) => {
+      const numericId = String(item.id).match(/\d+$/)?.[0] ?? String(item.id);
+      return numericId === String(target.userId);
+    });
+    const byLoginId = linkedTargets.find((item) => item.loginId === target.name);
     const byName = linkedTargets.find((item) => item.name === target.name);
-    return byId?.sub ?? byName?.sub ?? "연결된 대상자";
+    const sub = byId?.sub ?? byLoginId?.sub ?? byName?.sub ?? "연결된 대상자";
+
+    if (sub.includes("보호자") || sub.includes("부모")) return "보호자";
+    if (sub.includes("대상자") || sub.includes("자녀")) return "대상자";
+
+    return sub;
   };
 
   return (
@@ -2049,6 +2626,7 @@ function ProfileModal({
   onSaveTargets,
   onAddChild,
   onDeleteChild,
+  accountRoleLabel,
   canManageChildren,
 }: {
   visible: boolean;
@@ -2061,6 +2639,7 @@ function ProfileModal({
   onSaveTargets: (targets: Target[]) => Promise<void> | void;
   onAddChild: (child: ChildDraft) => Promise<Target>;
   onDeleteChild: (target: Target) => Promise<void>;
+  accountRoleLabel: "보호자" | "대상자";
   canManageChildren: boolean;
 }) {
   const [draft, setDraft] = useState<Profile>(profile);
@@ -2069,30 +2648,35 @@ function ProfileModal({
   const [tooltipField, setTooltipField] = useState<TooltipField>(null);
   const [childModalOpen, setChildModalOpen] = useState(false);
   const [childDraft, setChildDraft] = useState<ChildDraft>({
-    name: "",
-    age: "",
     loginId: "",
     password: "",
+    passwordConfirm: "",
+    name: "",
+    age: "",
   });
   const [childError, setChildError] = useState("");
   const [addingChild, setAddingChild] = useState(false);
+  const [childIdChecked, setChildIdChecked] = useState(false);
+  const [childIdCheckMessage, setChildIdCheckMessage] = useState("");
+  const [childPwShow, setChildPwShow] = useState(false);
+  const [childPw2Show, setChildPw2Show] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Target | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [deletingChild, setDeletingChild] = useState(false);
 
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const childNameInputRef = useRef<TextInput>(null);
-  const childNameValueRef = useRef("");
   const targetsScrollRef = useRef<ScrollView>(null);
   const modalScrollRef = useRef<ScrollView>(null);
 
   const [editingName, setEditingName] = useState(false);
   const [editingKey, setEditingKey] = useState<
-    null | "userId" | "email" | "phone"
+    null | "userId" | "email" | "phone" | "age"
   >(null);
 
+  const nameInputRef = useRef<TextInput>(null);
   const userIdRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
+  const ageRef = useRef<TextInput>(null);
 
   const [userIdSelection, setUserIdSelection] = useState({
     start: profile.userId.length,
@@ -2102,12 +2686,21 @@ function ProfileModal({
     start: profile.email.length,
     end: profile.email.length,
   });
+  const [ageSelection, setAgeSelection] = useState({
+    start: String(profile.age ?? "").length,
+    end: String(profile.age ?? "").length,
+  });
 
-  const [digitW, setDigitW] = useState<number>(14);
-  const [digitH, setDigitH] = useState<number>(20);
+  const isChildProfile = accountRoleLabel === "대상자";
+
+  const digitW = 8;
+  const digitH = 20;
 
   const A_BASE = "010";
   const B_BASE = "0000";
+
+  const CHILD_ID_REGEX = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
+  const CHILD_PW_REGEX = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
 
   const phoneInputRef = useRef<TextInput>(null);
   const [phoneDigits, setPhoneDigits] = useState<string>("");
@@ -2190,18 +2783,37 @@ function ProfileModal({
     return "";
   };
 
+  const validateAge = (value: string | number | null | undefined) => {
+    const onlyNumber = String(value ?? "").replace(/[^0-9]/g, "");
+    if (!onlyNumber) return "나이를 입력해 주세요.";
+
+    const age = Number(onlyNumber);
+    if (!Number.isFinite(age) || age < 1 || age > 120) {
+      return "나이는 1~120 사이로 입력해 주세요.";
+    }
+
+    return "";
+  };
+
   const validateAll = () => {
-    const nextErrors: FieldErrors = {
-      userId: validateUserId(draft.userId),
-      email: validateEmail(draft.email),
-      phone: validatePhone(phoneDigits),
-    };
+    const nextErrors: FieldErrors = isChildProfile
+      ? {
+          userId: validateUserId(draft.userId),
+          age: validateAge(draft.age),
+        }
+      : {
+          userId: validateUserId(draft.userId),
+          email: validateEmail(draft.email),
+          phone: validatePhone(phoneDigits),
+        };
 
     setErrors(nextErrors);
     clearTooltipTimer();
     setTooltipField(null);
 
-    return !nextErrors.userId && !nextErrors.email && !nextErrors.phone;
+    return isChildProfile
+      ? !nextErrors.userId && !nextErrors.age
+      : !nextErrors.userId && !nextErrors.email && !nextErrors.phone;
   };
 
   const aDigits = phoneDigits.slice(0, 3);
@@ -2232,8 +2844,17 @@ function ProfileModal({
     setEditingName(false);
     setEditingKey(null);
     setChildModalOpen(false);
-    setChildDraft({ name: "", age: "", loginId: "", password: "" });
-    childNameValueRef.current = "";
+    setChildDraft({
+      loginId: "",
+      password: "",
+      passwordConfirm: "",
+      name: "",
+      age: "",
+    });
+    setChildIdChecked(false);
+    setChildIdCheckMessage("");
+    setChildPwShow(false);
+    setChildPw2Show(false);
     setChildError("");
     Keyboard.dismiss();
 
@@ -2244,6 +2865,10 @@ function ProfileModal({
     setEmailSelection({
       start: (profile.email ?? "").length,
       end: (profile.email ?? "").length,
+    });
+    setAgeSelection({
+      start: String(profile.age ?? "").length,
+      end: String(profile.age ?? "").length,
     });
 
     const { a, b, c } = splitPhone(profile.phone || DEFAULT_PROFILE.phone);
@@ -2259,11 +2884,26 @@ function ProfileModal({
   useEffect(() => {
     if (!childModalOpen) return;
 
-    setChildDraft({ name: "", age: "", loginId: "", password: "" });
-    childNameValueRef.current = "";
+    setChildDraft({
+      loginId: "",
+      password: "",
+      passwordConfirm: "",
+      name: "",
+      age: "",
+    });
+    setChildIdChecked(false);
+    setChildIdCheckMessage("");
+    setChildPwShow(false);
+    setChildPw2Show(false);
     setChildError("");
     setAddingChild(false);
   }, [childModalOpen]);
+
+  const focusNameInput = () => {
+    requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+    });
+  };
 
   const endEditing = () => {
     Keyboard.dismiss();
@@ -2496,6 +3136,38 @@ function ProfileModal({
   const changeChildDraft = (key: keyof ChildDraft, value: string) => {
     setChildDraft((prev) => ({ ...prev, [key]: value }));
     setChildError("");
+
+    if (key === "loginId") {
+      setChildIdChecked(false);
+      setChildIdCheckMessage("");
+    }
+  };
+
+  const checkChildLoginIdDuplicate = async () => {
+    const trimmedId = childDraft.loginId.trim();
+
+    if (!trimmedId || trimmedId.length < 3 || !CHILD_ID_REGEX.test(trimmedId)) {
+      setChildError("계정 정보를 다시 입력해주세요.");
+      setChildIdChecked(false);
+      setChildIdCheckMessage("");
+      return;
+    }
+
+    const savedId = await AsyncStorage.getItem(ACCOUNT_ID_KEY);
+    const duplicatedLocal = draftTargets.some(
+      (target) => target.loginId === trimmedId || target.id === trimmedId,
+    );
+
+    if (savedId === trimmedId || duplicatedLocal || trimmedId === draft.userId.trim()) {
+      setChildError("계정 정보를 다시 입력해주세요.");
+      setChildIdChecked(false);
+      setChildIdCheckMessage("");
+      return;
+    }
+
+    setChildError("");
+    setChildIdChecked(true);
+    setChildIdCheckMessage("사용 가능한 아이디입니다");
   };
 
   const openDeleteChildModal = (target: Target) => {
@@ -2555,22 +3227,33 @@ function ProfileModal({
   };
 
   const submitChild = async () => {
-    const childName = childNameValueRef.current || childDraft.name;
     const trimmed = {
-      name: childName.trim(),
-      age: childDraft.age.trim(),
       loginId: childDraft.loginId.trim(),
       password: childDraft.password,
+      passwordConfirm: childDraft.passwordConfirm,
+      name: childDraft.name.trim(),
+      age: childDraft.age.trim(),
     };
 
-    if (!trimmed.name || !trimmed.age || !trimmed.loginId || !trimmed.password) {
-      setChildError("자녀 이름, 나이, 아이디, 비밀번호를 모두 입력해주세요.");
-      return;
-    }
-
     const ageNumber = Number(trimmed.age);
-    if (!Number.isInteger(ageNumber) || ageNumber <= 0) {
-      setChildError("나이는 숫자로 입력해주세요.");
+    const invalid =
+      !trimmed.loginId ||
+      trimmed.loginId.length < 3 ||
+      !CHILD_ID_REGEX.test(trimmed.loginId) ||
+      !childIdChecked ||
+      !trimmed.password ||
+      trimmed.password.length < 5 ||
+      !CHILD_PW_REGEX.test(trimmed.password) ||
+      !trimmed.passwordConfirm ||
+      trimmed.passwordConfirm !== trimmed.password ||
+      !trimmed.name ||
+      trimmed.name.length < 2 ||
+      !trimmed.age ||
+      !Number.isInteger(ageNumber) ||
+      ageNumber <= 0;
+
+    if (invalid) {
+      setChildError("계정 정보를 다시 입력해주세요.");
       return;
     }
 
@@ -2581,24 +3264,29 @@ function ProfileModal({
       setTimeout(() => {
         targetsScrollRef.current?.scrollToEnd({ animated: true });
       }, 120);
-      setChildDraft({ name: "", age: "", loginId: "", password: "" });
-      childNameValueRef.current = "";
+      setChildDraft({
+        loginId: "",
+        password: "",
+        passwordConfirm: "",
+        name: "",
+        age: "",
+      });
+      setChildIdChecked(false);
+      setChildIdCheckMessage("");
+      setChildPwShow(false);
+      setChildPw2Show(false);
       setChildError("");
       setChildModalOpen(false);
     } catch (error) {
-      console.log("자녀 추가 실패", error);
-      setChildError(
-        error instanceof Error
-          ? error.message
-          : "자녀 추가에 실패했습니다. 서버 상태를 확인해주세요.",
-      );
+      console.log("대상자 추가 실패", error);
+      setChildError("계정 정보를 다시 입력해주세요.");
     } finally {
       setAddingChild(false);
     }
   };
 
   const submitChildFromButton = () => {
-    childNameInputRef.current?.blur();
+    Keyboard.dismiss();
     setTimeout(submitChild, 0);
   };
 
@@ -2607,12 +3295,20 @@ function ProfileModal({
     if (!isValid) return;
 
     const phone = `${aView}-${bView}-${cView}`;
-    const nextProfile = {
-      ...draft,
-      userId: draft.userId.trim(),
-      email: draft.email.trim(),
-      phone,
-    };
+    const nextProfile = isChildProfile
+      ? {
+          ...draft,
+          userId: draft.userId.trim(),
+          age: Number(String(draft.age ?? "").replace(/[^0-9]/g, "")),
+          email: "",
+          phone: "",
+        }
+      : {
+          ...draft,
+          userId: draft.userId.trim(),
+          email: draft.email.trim(),
+          phone,
+        };
 
     endEditing();
     await onSaveProfile(nextProfile);
@@ -2634,30 +3330,7 @@ function ProfileModal({
       onRequestClose={handleClose}
     >
       <Pressable style={styles.modalDim} onPress={handleClose} />
-
-      <View
-        style={{ position: "absolute", opacity: 0, left: -9999, top: -9999 }}
-      >
-        <Text
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            if (width > 0) setDigitW(width);
-            if (height > 0) setDigitH(height);
-          }}
-          style={{
-            fontSize: 14,
-            fontWeight: "800",
-            fontVariant:
-              Platform.OS === "ios" ? (["tabular-nums"] as any) : undefined,
-            letterSpacing: 0,
-            includeFontPadding: false,
-          }}
-        >
-          0
-        </Text>
-      </View>
-
-      <KeyboardAvoidingView
+<KeyboardAvoidingView
         style={styles.modalCenter}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
@@ -2710,7 +3383,7 @@ function ProfileModal({
                 <View style={styles.nameSlot}>
                   {editingName ? (
                     <TextInput
-                      autoFocus
+                      ref={nameInputRef}
                       value={draft.name}
                       placeholder="이름 입력"
                       onChangeText={(t) => setDraft((p) => ({ ...p, name: t }))}
@@ -2727,6 +3400,7 @@ function ProfileModal({
                         setEditingKey(null);
                         scrollModalTo(0);
                         setEditingName(true);
+                        focusNameInput();
                       }}
                       hitSlop={10}
                       style={styles.namePress}
@@ -2737,6 +3411,8 @@ function ProfileModal({
                     </Pressable>
                   )}
                 </View>
+
+                <Text style={styles.profileRoleText}>{accountRoleLabel}</Text>
               </View>
 
               <View style={styles.infoCard}>
@@ -2805,175 +3481,249 @@ function ProfileModal({
                     </View>
                   </View>
                 </View>
+
                 <View style={styles.cardDivider} />
 
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="mail-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.email}
-                          onPress={() => showTooltip("email")}
+                {isChildProfile ? (
+                  <View>
+                    <View style={styles.infoRow}>
+                      <View style={styles.infoLeft}>
+                        <View style={styles.iconWrap}>
+                          <Ionicons
+                            name="happy-outline"
+                            size={18}
+                            color="rgba(17,24,39,0.55)"
+                          />
+                          <ErrorDot
+                            visible={!!errors.age}
+                            onPress={() => showTooltip("age")}
+                          />
+                        </View>
+
+                        <Text style={styles.infoLabel}>나이</Text>
+
+                        <ErrorTooltip
+                          visible={tooltipField === "age"}
+                          message={errors.age}
                         />
                       </View>
 
-                      <Text style={styles.infoLabel}>이메일</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "email"}
-                        message={errors.email}
-                      />
-                    </View>
-
-                    <View style={{ minWidth: 160, alignItems: "flex-end" }}>
-                      <TextInput
-                        ref={emailRef}
-                        value={draft.email}
-                        editable={editingKey === "email"}
-                        selection={emailSelection}
-                        onSelectionChange={(e) =>
-                          setEmailSelection(e.nativeEvent.selection)
-                        }
-                        onFocus={() => {
-                          const len = draft.email.length;
-                          setEmailSelection({ start: len, end: len });
-                        }}
-                        placeholder="이메일 입력"
-                        placeholderTextColor="rgba(17,24,39,0.28)"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        onChangeText={(t) => {
-                          setDraft((p) => ({ ...p, email: t }));
-                          const len = t.length;
-                          setEmailSelection({ start: len, end: len });
-                          setErrors((prev) => ({ ...prev, email: undefined }));
-                          if (tooltipField === "email") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
+                      <View style={{ minWidth: 160, alignItems: "flex-end" }}>
+                        <TextInput
+                          ref={ageRef}
+                          value={String(draft.age ?? "")}
+                          editable={editingKey === "age"}
+                          selection={ageSelection}
+                          onSelectionChange={(e) =>
+                            setAgeSelection(e.nativeEvent.selection)
                           }
-                        }}
-                        onSubmitEditing={endEditing}
-                        style={[
-                          styles.infoInput,
-                          editingKey !== "email" && styles.infoInputReadOnly,
-                        ]}
-                        returnKeyType="done"
-                      />
+                          onFocus={() => {
+                            const len = String(draft.age ?? "").length;
+                            setAgeSelection({ start: len, end: len });
+                          }}
+                          placeholder="나이 입력"
+                          placeholderTextColor="rgba(17,24,39,0.28)"
+                          keyboardType="number-pad"
+                          onChangeText={(t) => {
+                            const next = t.replace(/[^0-9]/g, "").slice(0, 3);
+                            setDraft((p) => ({ ...p, age: next }));
+                            const len = next.length;
+                            setAgeSelection({ start: len, end: len });
+                            setErrors((prev) => ({ ...prev, age: undefined }));
+                            if (tooltipField === "age") {
+                              clearTooltipTimer();
+                              setTooltipField(null);
+                            }
+                          }}
+                          onSubmitEditing={endEditing}
+                          style={[
+                            styles.infoInput,
+                            editingKey !== "age" && styles.infoInputReadOnly,
+                          ]}
+                          returnKeyType="done"
+                        />
 
-                      {editingKey !== "email" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("email")}
-                        />
-                      )}
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.cardDivider} />
-
-                <View>
-                  <View style={styles.infoRow}>
-                    <View style={styles.infoLeft}>
-                      <View style={styles.iconWrap}>
-                        <Ionicons
-                          name="call-outline"
-                          size={18}
-                          color="rgba(17,24,39,0.55)"
-                        />
-                        <ErrorDot
-                          visible={!!errors.phone}
-                          onPress={() => showTooltip("phone")}
-                        />
+                        {editingKey !== "age" && (
+                          <Pressable
+                            style={StyleSheet.absoluteFill}
+                            onPress={() => enterEdit("age")}
+                          />
+                        )}
                       </View>
-
-                      <Text style={styles.infoLabel}>전화번호</Text>
-
-                      <ErrorTooltip
-                        visible={tooltipField === "phone"}
-                        message={errors.phone}
-                      />
-                    </View>
-
-                    <View style={styles.phoneRowBox}>
-                      <PhoneVisualSlot
-                        max={3}
-                        baseText={A_BASE}
-                        digits={aDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "A"}
-                        cursorIndex={cursorIndexA}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={bDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "B"}
-                        cursorIndex={cursorIndexB}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <Text style={styles.phoneHyphen}>-</Text>
-
-                      <PhoneVisualSlot
-                        max={4}
-                        baseText={B_BASE}
-                        digits={cDigits}
-                        editable={editingKey === "phone"}
-                        digitW={digitW}
-                        digitH={digitH}
-                        showCursor={activePhoneSection === "C"}
-                        cursorIndex={cursorIndexC}
-                        onPress={() => enterEdit("phone")}
-                      />
-
-                      <TextInput
-                        ref={phoneInputRef}
-                        value={phoneDigits}
-                        editable={editingKey === "phone"}
-                        keyboardType="number-pad"
-                        maxLength={11}
-                        caretHidden
-                        contextMenuHidden
-                        selection={{
-                          start: phoneDigits.length,
-                          end: phoneDigits.length,
-                        }}
-                        onChangeText={(text) => {
-                          const next = text.replace(/[^0-9]/g, "").slice(0, 11);
-                          setPhoneDigits(next);
-                          setErrors((prev) => ({ ...prev, phone: undefined }));
-                          if (tooltipField === "phone") {
-                            clearTooltipTimer();
-                            setTooltipField(null);
-                          }
-                        }}
-                        style={styles.hiddenPhoneInput}
-                      />
-
-                      {editingKey !== "phone" && (
-                        <Pressable
-                          style={StyleSheet.absoluteFill}
-                          onPress={() => enterEdit("phone")}
-                        />
-                      )}
                     </View>
                   </View>
-                </View>
+                ) : (
+                  <>
+                    <View>
+                      <View style={styles.infoRow}>
+                        <View style={styles.infoLeft}>
+                          <View style={styles.iconWrap}>
+                            <Ionicons
+                              name="mail-outline"
+                              size={18}
+                              color="rgba(17,24,39,0.55)"
+                            />
+                            <ErrorDot
+                              visible={!!errors.email}
+                              onPress={() => showTooltip("email")}
+                            />
+                          </View>
+
+                          <Text style={styles.infoLabel}>이메일</Text>
+
+                          <ErrorTooltip
+                            visible={tooltipField === "email"}
+                            message={errors.email}
+                          />
+                        </View>
+
+                        <View style={{ minWidth: 160, alignItems: "flex-end" }}>
+                          <TextInput
+                            ref={emailRef}
+                            value={draft.email}
+                            editable={editingKey === "email"}
+                            selection={emailSelection}
+                            onSelectionChange={(e) =>
+                              setEmailSelection(e.nativeEvent.selection)
+                            }
+                            onFocus={() => {
+                              const len = draft.email.length;
+                              setEmailSelection({ start: len, end: len });
+                            }}
+                            placeholder="이메일 입력"
+                            placeholderTextColor="rgba(17,24,39,0.28)"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            onChangeText={(t) => {
+                              setDraft((p) => ({ ...p, email: t }));
+                              const len = t.length;
+                              setEmailSelection({ start: len, end: len });
+                              setErrors((prev) => ({ ...prev, email: undefined }));
+                              if (tooltipField === "email") {
+                                clearTooltipTimer();
+                                setTooltipField(null);
+                              }
+                            }}
+                            onSubmitEditing={endEditing}
+                            style={[
+                              styles.infoInput,
+                              editingKey !== "email" && styles.infoInputReadOnly,
+                            ]}
+                            returnKeyType="done"
+                          />
+
+                          {editingKey !== "email" && (
+                            <Pressable
+                              style={StyleSheet.absoluteFill}
+                              onPress={() => enterEdit("email")}
+                            />
+                          )}
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.cardDivider} />
+
+                    <View>
+                      <View style={styles.infoRow}>
+                        <View style={styles.infoLeft}>
+                          <View style={styles.iconWrap}>
+                            <Ionicons
+                              name="call-outline"
+                              size={18}
+                              color="rgba(17,24,39,0.55)"
+                            />
+                            <ErrorDot
+                              visible={!!errors.phone}
+                              onPress={() => showTooltip("phone")}
+                            />
+                          </View>
+
+                          <Text style={styles.infoLabel}>전화번호</Text>
+
+                          <ErrorTooltip
+                            visible={tooltipField === "phone"}
+                            message={errors.phone}
+                          />
+                        </View>
+
+                        <View style={styles.phoneRowBox}>
+                          <PhoneVisualSlot
+                            max={3}
+                            baseText={A_BASE}
+                            digits={aDigits}
+                            editable={editingKey === "phone"}
+                            digitW={digitW}
+                            digitH={digitH}
+                            showCursor={activePhoneSection === "A"}
+                            cursorIndex={cursorIndexA}
+                            onPress={() => enterEdit("phone")}
+                          />
+
+                          <Text style={styles.phoneHyphen}>-</Text>
+
+                          <PhoneVisualSlot
+                            max={4}
+                            baseText={B_BASE}
+                            digits={bDigits}
+                            editable={editingKey === "phone"}
+                            digitW={digitW}
+                            digitH={digitH}
+                            showCursor={activePhoneSection === "B"}
+                            cursorIndex={cursorIndexB}
+                            onPress={() => enterEdit("phone")}
+                          />
+
+                          <Text style={styles.phoneHyphen}>-</Text>
+
+                          <PhoneVisualSlot
+                            max={4}
+                            baseText={B_BASE}
+                            digits={cDigits}
+                            editable={editingKey === "phone"}
+                            digitW={digitW}
+                            digitH={digitH}
+                            showCursor={activePhoneSection === "C"}
+                            cursorIndex={cursorIndexC}
+                            onPress={() => enterEdit("phone")}
+                          />
+
+                          <TextInput
+                            ref={phoneInputRef}
+                            value={phoneDigits}
+                            editable={editingKey === "phone"}
+                            keyboardType="number-pad"
+                            maxLength={11}
+                            caretHidden
+                            contextMenuHidden
+                            selection={{
+                              start: phoneDigits.length,
+                              end: phoneDigits.length,
+                            }}
+                            onChangeText={(text) => {
+                              const next = text.replace(/[^0-9]/g, "").slice(0, 11);
+                              setPhoneDigits(next);
+                              setErrors((prev) => ({ ...prev, phone: undefined }));
+                              if (tooltipField === "phone") {
+                                clearTooltipTimer();
+                                setTooltipField(null);
+                              }
+                            }}
+                            style={styles.hiddenPhoneInput}
+                          />
+
+                          {editingKey !== "phone" && (
+                            <Pressable
+                              style={StyleSheet.absoluteFill}
+                              onPress={() => enterEdit("phone")}
+                            />
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  </>
+                )}
 
                 <View style={styles.cardDivider} />
               </View>
@@ -2985,7 +3735,7 @@ function ProfileModal({
                   color="rgba(17,24,39,0.6)"
                 />
                 <Text style={styles.linkedTitle}>
-                  연결된 대상자 ({draftTargets.length})
+                  연결된 {isChildProfile ? "보호자" : "대상자"} ({draftTargets.length})
                 </Text>
               </View>
 
@@ -3038,7 +3788,7 @@ function ProfileModal({
                   {draftTargets.length === 0 && (
                     <View style={styles.emptyTargetsBox}>
                       <Text style={styles.emptyTargetsText}>
-                        연결된 대상자가 없습니다.
+                        연결된 {isChildProfile ? "보호자" : "대상자"}가 없습니다.
                       </Text>
                     </View>
                   )}
@@ -3055,7 +3805,7 @@ function ProfileModal({
                     }}
                   >
                     <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
-                    <Text style={styles.addChildBtnText}>자녀 추가하기</Text>
+                    <Text style={styles.addChildBtnText}>대상자 추가하기</Text>
                   </Pressable>
                 </View>
               )}
@@ -3143,17 +3893,12 @@ function ProfileModal({
           setChildModalOpen(false);
         }}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={0}
-          style={styles.childModalKeyboardAvoiding}
+        <Pressable
+          style={styles.childModalSheet}
+          onPress={(event) => event.stopPropagation()}
         >
-          <Pressable
-            style={styles.childModalSheet}
-            onPress={(event) => event.stopPropagation()}
-          >
-            <View style={styles.childModalTop}>
-            <Text style={styles.childModalTitle}>자녀 추가하기</Text>
+          <View style={styles.childModalTop}>
+            <Text style={styles.childModalTitle}>대상자 추가하기</Text>
             <Pressable
               onPress={() => setChildModalOpen(false)}
               style={styles.modalCloseBtn}
@@ -3163,30 +3908,96 @@ function ProfileModal({
             </Pressable>
           </View>
 
-          <View style={styles.childModalBody}>
+          <ScrollView
+            style={styles.childModalScroll}
+            contentContainerStyle={styles.childModalBody}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.childIdRow}>
+              <TextInput
+                value={childDraft.loginId}
+                onChangeText={(text) => changeChildDraft("loginId", text)}
+                placeholder="아이디 입력"
+                placeholderTextColor="rgba(17,24,39,0.35)"
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                style={[styles.childInput, styles.childIdInput]}
+                returnKeyType="next"
+                autoComplete="off"
+                textContentType="none"
+                importantForAutofill="no"
+              />
+
+              <Pressable style={styles.childIdCheckBtn} onPress={checkChildLoginIdDuplicate}>
+                <Text style={styles.childIdCheckBtnText}>중복 확인</Text>
+              </Pressable>
+            </View>
+            {!!childIdCheckMessage && (
+              <Text style={styles.childSuccessText}>{childIdCheckMessage}</Text>
+            )}
+
+            <View style={styles.childPwRow}>
+              <TextInput
+                value={childDraft.password}
+                onChangeText={(text) => changeChildDraft("password", text)}
+                placeholder="비밀번호 입력"
+                placeholderTextColor="rgba(17,24,39,0.35)"
+                secureTextEntry={!childPwShow}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                style={[styles.childInput, styles.childPwInput]}
+                returnKeyType="next"
+                autoComplete="new-password"
+                textContentType="newPassword"
+                importantForAutofill="no"
+              />
+
+              <Pressable style={styles.childEyeBtn} onPress={() => setChildPwShow((v) => !v)}>
+                <Ionicons name={childPwShow ? "eye" : "eye-off"} size={18} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
+            <View style={styles.childPwRow}>
+              <TextInput
+                value={childDraft.passwordConfirm}
+                onChangeText={(text) => changeChildDraft("passwordConfirm", text)}
+                placeholder="비밀번호 재입력"
+                placeholderTextColor="rgba(17,24,39,0.35)"
+                secureTextEntry={!childPw2Show}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                style={[styles.childInput, styles.childPwInput]}
+                returnKeyType="next"
+                autoComplete="new-password"
+                textContentType="newPassword"
+                importantForAutofill="no"
+              />
+
+              <Pressable style={styles.childEyeBtn} onPress={() => setChildPw2Show((v) => !v)}>
+                <Ionicons name={childPw2Show ? "eye" : "eye-off"} size={18} color="#9CA3AF" />
+              </Pressable>
+            </View>
+
             <TextInput
-              ref={childNameInputRef}
-              key={childModalOpen ? "child-name-open" : "child-name-closed"}
-              defaultValue=""
-              onEndEditing={(event) => {
-                const nextName = event.nativeEvent.text;
-                childNameValueRef.current = nextName;
-                changeChildDraft("name", nextName);
-              }}
-              placeholder="자녀 이름"
+              value={childDraft.name}
+              onChangeText={(text) => changeChildDraft("name", text)}
+              placeholder="이름 입력"
               placeholderTextColor="rgba(17,24,39,0.35)"
-              style={[styles.childInput, styles.childNameInput]}
+              style={styles.childInput}
               keyboardType="default"
-              multiline
-              numberOfLines={1}
-              textAlignVertical="center"
               returnKeyType="next"
-              blurOnSubmit={false}
-              showSoftInputOnFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
               autoComplete="off"
               textContentType="none"
               importantForAutofill="no"
             />
+
             <TextInput
               value={childDraft.age}
               onChangeText={(text) =>
@@ -3200,35 +4011,6 @@ function ProfileModal({
               textContentType="none"
               importantForAutofill="no"
             />
-            <TextInput
-              value={childDraft.loginId}
-              onChangeText={(text) => changeChildDraft("loginId", text)}
-              placeholder="자녀 로그인 아이디"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.childInput}
-              returnKeyType="next"
-              autoComplete="off"
-              textContentType="none"
-              importantForAutofill="no"
-            />
-            <TextInput
-              value={childDraft.password}
-              onChangeText={(text) => changeChildDraft("password", text)}
-              placeholder="비밀번호"
-              placeholderTextColor="rgba(17,24,39,0.35)"
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.childInput}
-              returnKeyType="done"
-              onSubmitEditing={submitChild}
-              autoComplete="new-password"
-              textContentType="newPassword"
-              importantForAutofill="no"
-            />
-
             {!!childError && (
               <Text style={styles.childErrorText}>{childError}</Text>
             )}
@@ -3242,9 +4024,8 @@ function ProfileModal({
                 {addingChild ? "저장 중..." : "저장"}
               </Text>
             </Pressable>
-          </View>
-          </Pressable>
-        </KeyboardAvoidingView>
+          </ScrollView>
+        </Pressable>
       </Pressable>
     </Modal>
     </>
@@ -3259,6 +4040,68 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
 
   map: { flex: 1, backgroundColor: "#DCEEFF", position: "relative" },
+  sosToastWrap: {
+    position: "absolute",
+    top: Platform.select({ ios: 31, android: 23, default: 23 }),
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 50,
+  },
+  sosToastBox: {
+    alignSelf: "center",
+    minHeight: 46,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    backgroundColor: "rgba(255, 235, 235, 0.92)",
+    borderColor: "rgba(239,68,68,0.35)",
+    ...SHADOW.soft,
+  },
+  sosToastContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  sosToastText: {
+    marginLeft: 5,
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 18,
+    color: "#B91C1C",
+  },
+  sosToastCloseBtn: {
+    marginLeft: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  childSosBtn: {
+    position: "absolute",
+    left: "50%",
+    bottom: 26,
+    marginLeft: -60,
+    width: 120,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: COLORS.danger,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    zIndex: 24,
+    ...SHADOW.floating,
+  },
+  childSosBtnActive: {
+    backgroundColor: "#B91C1C",
+  },
+  childSosBtnText: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
   routeBtn: {
     position: "absolute",
     left: 20,
@@ -3269,8 +4112,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 20,
+    zIndex: 30,
     ...SHADOW.card,
+    elevation: 30,
   },
   routeBtnActive: {
     borderWidth: 2,
@@ -3632,7 +4476,8 @@ const styles = StyleSheet.create({
   },
   modalSheet: {
     width: "88%",
-    maxHeight: "88%",
+    maxHeight: "85%",
+    transform: [{ translateY: -13 }],
     backgroundColor: "#fff",
     borderRadius: 20,
     overflow: "visible",
@@ -3699,11 +4544,11 @@ const styles = StyleSheet.create({
 
   nameSlot: {
     marginTop: 10,
-    height: 28,
+    minHeight: 28,
     justifyContent: "center",
     alignItems: "center",
   },
-  namePress: { height: 28, justifyContent: "center" },
+  namePress: { minHeight: 28, justifyContent: "center" },
   profileName: {
     fontSize: 20,
     fontWeight: "900",
@@ -3711,8 +4556,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     textAlign: "center",
   },
+  profileRoleText: {
+    marginBottom: 2,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(17,24,39,0.5)",
+    lineHeight: 16,
+    textAlign: "center",
+  },
 
   nameInput: {
+    minWidth: 140,
     height: 28,
     fontSize: 20,
     fontWeight: "900",
@@ -3722,7 +4576,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     paddingVertical: 0,
-    paddingHorizontal: 0,
+    paddingHorizontal: 6,
     includeFontPadding: false,
   },
 
@@ -3997,19 +4851,24 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.42)",
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 22,
+    paddingTop: 47,
+    paddingBottom: 10,
   },
   childModalKeyboardAvoiding: {
-    width: "100%",
-    maxWidth: 360,
+    width: "88%",
+    maxHeight: "85%",
   },
   childModalSheet: {
-    width: "100%",
-    maxWidth: 360,
-    borderRadius: 18,
+    width: "88%",
+    maxHeight: "85%",
+    transform: [{ translateY: -13 }],
+    borderRadius: 20,
     backgroundColor: "#fff",
     overflow: "hidden",
     ...SHADOW.floating,
+  },
+  childModalScroll: {
+    flexGrow: 0,
   },
   childModalTop: {
     height: 50,
@@ -4018,15 +4877,61 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
   },
   childModalTitle: {
     color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
+    fontSize: 17,
+    fontWeight: "700",
+    marginTop: 2,
+    marginLeft: 2,
   },
   childModalBody: {
     padding: 16,
     gap: 9,
+    paddingBottom: 18,
+  },
+  childIdRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  childIdInput: {
+    flex: 1,
+  },
+  childIdCheckBtn: {
+    width: 82,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  childIdCheckBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#fff",
+  },
+  childPwRow: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  childPwInput: {
+    paddingRight: 42,
+  },
+  childEyeBtn: {
+    position: "absolute",
+    right: 10,
+    height: 42,
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  childSuccessText: {
+    marginTop: -4,
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.success,
   },
   deleteConfirmSheet: {
     width: "100%",

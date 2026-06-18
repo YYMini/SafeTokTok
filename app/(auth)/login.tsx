@@ -28,6 +28,8 @@ const STORAGE_KEYS = {
   currentUserId: "currentUserId",
   currentUserRole: "currentUserRole",
   profile: "profileData_v1",
+  permissionConsent: "permissionConsent",
+  permissionConsentPending: "permissionConsentPending",
 } as const;
 
 type ToastType = "error" | "success" | "none";
@@ -38,6 +40,7 @@ type LoginResponse = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  age?: number | null;
   role: "PARENT" | "CHILD";
 };
 
@@ -159,11 +162,68 @@ export default function LoginScreen() {
         userId: loggedInUser.loginId,
         email: loggedInUser.email ?? "",
         phone: loggedInUser.phone ?? "010-0000-0000",
+        age: loggedInUser.age ?? null,
         imageUri: null,
         role: toProfileRole(loggedInUser.role),
-        roleLabel: loggedInUser.role === "PARENT" ? "보호자" : "사용자",
+        roleLabel: loggedInUser.role === "PARENT" ? "보호자" : "대상자",
       }),
     );
+  };
+
+  const saveRememberState = async () => {
+    if (rememberMe) {
+      await AsyncStorage.setItem(STORAGE_KEYS.remember, "true");
+      await AsyncStorage.setItem(STORAGE_KEYS.savedId, normalized.id);
+      await AsyncStorage.setItem(STORAGE_KEYS.savedPw, normalized.pw);
+      return;
+    }
+
+    await AsyncStorage.setItem(STORAGE_KEYS.remember, "false");
+    await AsyncStorage.removeItem(STORAGE_KEYS.savedId);
+    await AsyncStorage.removeItem(STORAGE_KEYS.savedPw);
+  };
+
+  const tryLocalLogin = async () => {
+    const [savedId, savedPw, profileRaw, currentUserId, currentUserRole] =
+      await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.accountId),
+        AsyncStorage.getItem(STORAGE_KEYS.accountPw),
+        AsyncStorage.getItem(STORAGE_KEYS.profile),
+        AsyncStorage.getItem(STORAGE_KEYS.currentUserId),
+        AsyncStorage.getItem(STORAGE_KEYS.currentUserRole),
+      ]);
+
+    if (savedId !== normalized.id || savedPw !== normalized.pw) {
+      return false;
+    }
+
+    await saveRememberState();
+    await AsyncStorage.setItem(STORAGE_KEYS.isLoggedIn, "true");
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.currentUserId,
+      currentUserId || normalized.id,
+    );
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.currentUserRole,
+      currentUserRole || "PARENT",
+    );
+
+    if (!profileRaw) {
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.profile,
+        JSON.stringify({
+          name: normalized.id,
+          userId: normalized.id,
+          email: "",
+          phone: "010-0000-0000",
+          imageUri: null,
+          role: "guardian",
+          roleLabel: "보호자",
+        }),
+      );
+    }
+
+    return true;
   };
 
   const onSubmit = async () => {
@@ -173,6 +233,8 @@ export default function LoginScreen() {
       showToast("error", "아이디 및 비밀번호를 입력해주세요");
       return;
     }
+
+    let loggedInAccountId = normalized.id;
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
@@ -191,17 +253,53 @@ export default function LoginScreen() {
       }
 
       const loggedInUser = (await response.json()) as LoginResponse;
+      loggedInAccountId = loggedInUser.loginId;
       await saveLoginState(loggedInUser);
     } catch (error) {
       console.log("백엔드 로그인 실패", error);
-      showToast("error", "아이디 또는 비밀번호가 올바르지 않습니다");
-      await AsyncStorage.removeItem(STORAGE_KEYS.currentUserId);
-      await AsyncStorage.removeItem(STORAGE_KEYS.currentUserRole);
-      return;
+
+      const localLoginOk = await tryLocalLogin();
+
+      if (!localLoginOk) {
+        showToast("error", "아이디 또는 비밀번호가 올바르지 않습니다");
+        await AsyncStorage.removeItem(STORAGE_KEYS.currentUserId);
+        await AsyncStorage.removeItem(STORAGE_KEYS.currentUserRole);
+        return;
+      }
+    }
+
+    const savedCurrentUserId = await AsyncStorage.getItem(STORAGE_KEYS.currentUserId);
+    const permissionOwnerId = savedCurrentUserId || loggedInAccountId;
+    const permissionConsentKey = `${STORAGE_KEYS.permissionConsent}_user_${permissionOwnerId}`;
+    const permissionPendingKey = `${STORAGE_KEYS.permissionConsentPending}_user_${permissionOwnerId}`;
+    const legacyPermissionConsentKey = `${STORAGE_KEYS.permissionConsent}_${loggedInAccountId}`;
+
+    const [
+      permissionConsentDone,
+      permissionPending,
+      legacyPermissionConsentDone,
+    ] = await Promise.all([
+      AsyncStorage.getItem(permissionConsentKey),
+      AsyncStorage.getItem(permissionPendingKey),
+      AsyncStorage.getItem(legacyPermissionConsentKey),
+    ]);
+
+    if (legacyPermissionConsentDone === "true" && permissionConsentDone !== "true") {
+      await AsyncStorage.setItem(permissionConsentKey, "true");
+      await AsyncStorage.removeItem(permissionPendingKey);
     }
 
     await login();
-    router.replace("/(tabs)");
+
+    if (
+      permissionPending === "true" &&
+      permissionConsentDone !== "true" &&
+      legacyPermissionConsentDone !== "true"
+    ) {
+      router.replace("/(auth)/permission-consent");
+    } else {
+      router.replace("/(tabs)");
+    }
   };
 
   const goSignup = () => router.push("/(auth)/signup");

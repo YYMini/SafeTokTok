@@ -25,6 +25,7 @@ type SavedProfile = {
   userId?: string;
   email?: string;
   phone?: string;
+  age?: number | string | null;
 };
 
 const STORAGE_KEYS = {

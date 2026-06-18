@@ -23,7 +23,8 @@ type Profile = {
   email: string;
   phone: string;
   imageUri: string | null;
-  role?: "user" | "guardian";
+  age?: number | string | null;
+  role?: "user" | "guardian" | "PARENT" | "CHILD";
   roleLabel?: string;
 };
 
@@ -31,6 +32,8 @@ type Target = {
   id: string;
   name: string;
   sub: string;
+  age?: number;
+  loginId?: string;
 };
 
 type WorkArea = {
@@ -60,6 +63,8 @@ type InfoModalType = "terms" | "privacy" | null;
 const PROFILE_KEY = "profileData_v1";
 const TARGETS_KEY = "linkedTargets_v1";
 const ACCOUNT_ID_KEY = "authAccountId";
+const CURRENT_USER_ROLE_KEY = "currentUserRole";
+const CURRENT_USER_ID_KEY = "currentUserId";
 const WORK_AREAS_KEY = "workAreas_v1";
 const SAFE_ZONE_KEY = "safeZoneSettings_v1";
 const NOTIFICATION_KEY = "notificationSettings_v1";
@@ -74,20 +79,17 @@ const DEFAULT_PROFILE: Profile = {
   roleLabel: "보호자",
 };
 
-const DEFAULT_TARGETS: Target[] = [
-  { id: "m1", name: "김민준", sub: "7세 · 자녀" },
-  { id: "s1", name: "이서윤", sub: "5세 · 자녀" },
-];
+const DEFAULT_TARGETS: Target[] = [];
 
 const DEFAULT_WORK_AREAS: WorkArea[] = [
-  { id: "w1", name: "강남초등학교", address: "서울특별시 강남구" },
-  { id: "w2", name: "시립도서관", address: "서울특별시 강남구" },
-  { id: "w3", name: "이마트", address: "서울특별시 강남구" },
+  { id: "w1", name: "서울특별시청 무교로청사", address: "서울특별시 중구" },
+  { id: "w2", name: "예원학교", address: "서울특별시 중구" },
+  { id: "w3", name: "삼정아트테라스정동", address: "서울특별시 중구" },
 ];
 
 const DEFAULT_SAFE_ZONE: SafeZoneSettings = {
   areaId: "w1",
-  areaName: "강남초등학교",
+  areaName: "서울특별시청 무교로청사",
   radius: 300,
 };
 
@@ -109,6 +111,8 @@ export default function SettingsScreen() {
   const [workAreas, setWorkAreas] = useState<WorkArea[]>(DEFAULT_WORK_AREAS);
   const [safeZone, setSafeZone] = useState<SafeZoneSettings>(DEFAULT_SAFE_ZONE);
   const [noti, setNoti] = useState<NotificationSettings>(DEFAULT_NOTI);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [areaModalOpen, setAreaModalOpen] = useState(false);
@@ -116,8 +120,23 @@ export default function SettingsScreen() {
 
   const targetCountText = useMemo(() => `${targets.length}명`, [targets.length]);
 
-  const roleText =
-    profile.roleLabel ?? (profile.role === "user" ? "사용자" : "보호자");
+  const isChildAccount =
+    currentUserRole === "CHILD" ||
+    profile.role === "CHILD" ||
+    profile.role === "user" ||
+    profile.roleLabel === "대상자";
+
+  const roleText = isChildAccount ? "대상자" : "보호자";
+  const managedUserText = isChildAccount ? "보호자" : "대상자";
+  const managedCountText = `${targets.length}명`;
+  const profileAge =
+    profile.age ??
+    targets.find(
+      (target) =>
+        String(target.id) === String(currentUserId) ||
+        target.loginId === profile.userId ||
+        target.name === profile.name,
+    )?.age;
 
   const loadData = useCallback(async () => {
     try {
@@ -128,6 +147,8 @@ export default function SettingsScreen() {
         savedWorkAreas,
         savedSafeZone,
         savedNoti,
+        savedCurrentUserRole,
+        savedCurrentUserId,
       ] = await Promise.all([
         AsyncStorage.getItem(PROFILE_KEY),
         AsyncStorage.getItem(TARGETS_KEY),
@@ -135,7 +156,12 @@ export default function SettingsScreen() {
         AsyncStorage.getItem(WORK_AREAS_KEY),
         AsyncStorage.getItem(SAFE_ZONE_KEY),
         AsyncStorage.getItem(NOTIFICATION_KEY),
+        AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
+        AsyncStorage.getItem(CURRENT_USER_ID_KEY),
       ]);
+
+      setCurrentUserRole(savedCurrentUserRole);
+      setCurrentUserId(savedCurrentUserId);
 
       if (savedProfile) {
         const parsed = JSON.parse(savedProfile) as Partial<Profile>;
@@ -151,7 +177,22 @@ export default function SettingsScreen() {
 
       if (savedTargets) {
         const parsedTargets = JSON.parse(savedTargets);
-        if (Array.isArray(parsedTargets)) setTargets(parsedTargets);
+
+        if (Array.isArray(parsedTargets)) {
+          const realTargets = parsedTargets.filter(
+            (target) => target?.id !== "m1" && target?.id !== "s1"
+          );
+
+          setTargets(realTargets);
+
+          if (realTargets.length !== parsedTargets.length) {
+            await AsyncStorage.setItem(TARGETS_KEY, JSON.stringify(realTargets));
+          }
+        } else {
+          setTargets([]);
+        }
+      } else {
+        setTargets([]);
       }
 
       if (savedWorkAreas) {
@@ -234,42 +275,49 @@ export default function SettingsScreen() {
               {profile.imageUri ? (
                 <Image source={{ uri: profile.imageUri }} style={styles.profileImage} />
               ) : (
-                <Ionicons name="person" size={36} color="#FFFFFF" />
+                <Ionicons name="person" size={26} color="#FFFFFF" />
               )}
             </View>
 
             <View style={styles.profileTextBox}>
               <Text style={styles.profileName}>{profile.name}</Text>
               <Text style={styles.profileRole}>{roleText}</Text>
-              
+
             </View>
           </View>
 
           <Section title="계정 정보">
             <InfoRow icon="person-outline" label="ID" value={profile.userId || "-"} />
-            <InfoRow icon="call-outline" label="전화번호" value={profile.phone || "-"} />
-            <InfoRow icon="mail-outline" label="이메일" value={profile.email || "-"} isLast />
+            {isChildAccount ? (
+              <InfoRow icon="calendar-outline" label="나이" value={profileAge ? `${profileAge}세` : "-"} isLast />
+            ) : (
+              <>
+                <InfoRow icon="call-outline" label="전화번호" value={profile.phone || "-"} />
+                <InfoRow icon="mail-outline" label="이메일" value={profile.email || "-"} isLast />
+              </>
+            )}
           </Section>
 
-          <Section title="대상자 관리">
+          <Section title={`${managedUserText} 관리`}>
             <Pressable style={styles.linkRow} onPress={() => setTargetModalOpen(true)}>
               <View style={styles.rowLeft}>
                 <View style={styles.iconCircle}>
                   <Ionicons name="people-outline" size={18} color={COLORS.primary} />
                 </View>
                 <View>
-                  <Text style={styles.rowLabel}>등록된 대상자</Text>
-                  <Text style={styles.rowSub}>총 대상자 수 {targetCountText}</Text>
+                  <Text style={styles.rowLabel}>등록된 {managedUserText}</Text>
+                  <Text style={styles.rowSub}>총 {managedUserText} 수 {managedCountText}</Text>
                 </View>
               </View>
 
               <View style={styles.rowRight}>
-                <Text style={styles.rowValue}>{targetCountText}</Text>
+                <Text style={styles.rowValue}>{managedCountText}</Text>
                 <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
               </View>
             </Pressable>
           </Section>
 
+          {!isChildAccount && (
           <Section title="안전구역 설정">
             <View style={styles.safeZoneBox}>
               <Text style={styles.safeZoneTitle}>지오펜스 반경</Text>
@@ -313,6 +361,9 @@ export default function SettingsScreen() {
             </Pressable>
           </Section>
 
+          )}
+
+          {!isChildAccount && (
           <Section title="알림 설정">
             <View style={styles.notiIntervalBox}>
               <View style={styles.notiTopRow}>
@@ -359,10 +410,21 @@ export default function SettingsScreen() {
             <SwitchRow icon="phone-portrait-outline" label="진동" value={noti.vibration} onValueChange={() => toggleNoti("vibration")} isLast />
           </Section>
 
+          )}
+
           <Section title="긴급 연락처">
             <InfoRow icon="shield-outline" label="경찰서" value="112" />
-            <InfoRow icon="medkit-outline" label="소방서" value="119" />
-            <InfoRow icon="call-outline" label="보호자 연락처" value={profile.phone} isLast />
+            <InfoRow icon="medkit-outline" label="소방서" value="119" isLast />
+          </Section>
+
+          <Section title="권한 관리">
+            <InfoRow
+              icon="shield-checkmark-outline"
+              label="서비스 권한 동의"
+              value="관리"
+              isLast
+              onPress={() => router.push("/(auth)/permission-consent")}
+            />
           </Section>
 
           <Section title="앱 정보">
@@ -372,7 +434,12 @@ export default function SettingsScreen() {
           </Section>
         </ScrollView>
 
-        <RegisteredTargetModal visible={targetModalOpen} targets={targets} onClose={() => setTargetModalOpen(false)} />
+        <RegisteredTargetModal
+          visible={targetModalOpen}
+          targets={targets}
+          managedUserText={managedUserText}
+          onClose={() => setTargetModalOpen(false)}
+        />
 
         <WorkAreaModal
           visible={areaModalOpen}
@@ -470,10 +537,12 @@ function SwitchRow({
 function RegisteredTargetModal({
   visible,
   targets,
+  managedUserText,
   onClose,
 }: {
   visible: boolean;
   targets: Target[];
+  managedUserText: string;
   onClose: () => void;
 }) {
   return (
@@ -481,13 +550,15 @@ function RegisteredTargetModal({
       <View style={styles.modalDim}>
         <View style={styles.modalBox}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>등록된 대상자</Text>
+            <Text style={styles.modalTitle}>등록된 {managedUserText}</Text>
             <Pressable onPress={onClose} hitSlop={10}>
               <Ionicons name="close" size={22} color="#111827" />
             </Pressable>
           </View>
 
-          <Text style={styles.modalSub}>총 {targets.length}명의 대상자가 등록되어 있습니다.</Text>
+          <Text style={styles.modalSub}>
+            총 {targets.length}명의 {managedUserText}가 등록되었습니다.
+          </Text>
 
           <View style={styles.modalList}>
             {targets.length > 0 ? (
@@ -503,7 +574,7 @@ function RegisteredTargetModal({
                 </View>
               ))
             ) : (
-              <Text style={styles.emptyText}>등록된 대상자가 없습니다.</Text>
+              <Text style={styles.emptyText}>등록된 {managedUserText}가 없습니다.</Text>
             )}
           </View>
 
@@ -672,8 +743,8 @@ const styles = StyleSheet.create({
     ...SHADOW.card,
   },
   profileAvatar: {
-    width: 78,
-    height: 78,
+    width: 50,
+    height: 50,
     borderRadius: 39,
     backgroundColor: "#2F80FF",
     alignItems: "center",
@@ -691,13 +762,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   profileName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
     color: "#111827",
-    marginBottom: 7,
   },
   profileRole: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "800",
     color: "#6B7280",
   },

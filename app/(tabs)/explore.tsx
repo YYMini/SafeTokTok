@@ -5,7 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 type TabType = "location" | "bio";
@@ -16,9 +16,20 @@ type Profile = {
   userId: string;
   email: string;
   phone: string;
+  age?: number | string | null;
   imageUri: string | null;
-  role?: "user" | "guardian";
+  role?: "user" | "guardian" | "PARENT" | "CHILD";
   roleLabel?: string;
+};
+
+type Target = {
+  id: string;
+  name: string;
+  sub: string;
+  age?: number;
+  loginId?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 type LocationAlert = {
@@ -50,6 +61,8 @@ type BioAlert = {
 
 const PROFILE_KEY = "profileData_v1";
 const ACCOUNT_ID_KEY = "authAccountId";
+const CURRENT_USER_ROLE_KEY = "currentUserRole";
+const TARGETS_KEY = "linkedTargets_v1";
 
 const DEFAULT_PROFILE: Profile = {
   name: "보호자",
@@ -61,37 +74,83 @@ const DEFAULT_PROFILE: Profile = {
   roleLabel: "보호자",
 };
 
-const MOCK_LOCATION = {
-  emergency: [
-    { id: "e1", targetName: "김민준", occurredAt: "2025-11-11 14:32", address: "서울시 강남구 역삼동" },
-    { id: "e2", targetName: "김민준", occurredAt: "2025-11-10 18:45", address: "서울시 강남구 삼성동" },
-    { id: "e3", targetName: "김민준", occurredAt: "2025-11-09 16:12", address: "서울시 강남구 대치동" },
-  ] as LocationAlert[],
+export default function AlertScreen() {
+  const router = useRouter();
 
-  out: [
-    { id: "o1", targetName: "김민준", occurredAt: "2025-11-11 12:15", address: "안전구역에서 120m 이탈", distance: 120 },
-    { id: "o2", targetName: "이서윤", occurredAt: "2025-11-11 09:40", address: "안전구역에서 85m 이탈", distance: 85 },
-    { id: "o3", targetName: "김민준", occurredAt: "2025-11-10 17:28", address: "안전구역에서 60m 이탈", distance: 60 },
-    { id: "o4", targetName: "이서윤", occurredAt: "2025-11-09 15:10", address: "안전구역에서 95m 이탈", distance: 95 },
-  ] as LocationAlert[],
+  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+  const [linkedTargets, setLinkedTargets] = useState<Target[]>([]);
+  const [tab, setTab] = useState<TabType>("location");
+  const [bioTab, setBioTab] = useState<BioTabType>("heart");
 
-  back: [
-    { id: "b1", targetName: "이서윤", occurredAt: "2025-11-11 10:05", address: "안전구역으로 복귀" },
-    { id: "b2", targetName: "이서윤", occurredAt: "2025-11-09 16:02", address: "안전구역으로 복귀" },
-    { id: "b3", targetName: "이서윤", occurredAt: "2025-11-08 10:01", address: "안전구역으로 복귀" },
-  ] as LocationAlert[],
-};
+  const targetLabel =
+    currentUserRole === "CHILD"
+      ? profile.userId || "user"
+      : linkedTargets.find((item) => item.sub === "대상자")?.loginId ||
+        linkedTargets.find((item) => item.sub === "대상자")?.name ||
+        "user";
 
-const MOCK_DEVICES: DeviceStatus[] = [
-  { id: "d1", deviceName: "Galaxy Watch", targetName: "김민준", connected: true, battery: 75 },
-  { id: "d2", deviceName: "Galaxy Watch", targetName: "이서윤", connected: false, lastUpdatedAt: "2025-11-19 09:30" },
-];
+  const emergencyAlerts: LocationAlert[] = [
+    {
+      id: "e1",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 14:32",
+      address: "SOS 긴급 요청 발생",
+    },
+    {
+      id: "e2",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 13:18",
+      address: "SOS 긴급 요청 발생",
+    },
+    {
+      id: "e3",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 10:47",
+      address: "SOS 긴급 요청 발생",
+    },
+  ];
 
-const MOCK_BIO = {
-  heart: [
+  const outAlerts: LocationAlert[] = [
+    {
+      id: "o1",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 12:15",
+      address: "안전구역에서 120m 이탈",
+      distance: 120,
+    },
+    {
+      id: "o2",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 11:02",
+      address: "안전구역에서 85m 이탈",
+      distance: 85,
+    },
+    {
+      id: "o3",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 09:41",
+      address: "안전구역에서 150m 이탈",
+      distance: 150,
+    },
+  ];
+
+  const backAlerts: LocationAlert[] = [];
+
+  const deviceStatuses: DeviceStatus[] = [
+    {
+      id: "d1",
+      deviceName: "Galaxy Watch",
+      targetName: targetLabel,
+      connected: true,
+      battery: 75,
+    },
+  ];
+
+  const heartAlerts: BioAlert[] = [
     {
       id: "h1",
-      targetName: "김민준",
+      targetName: targetLabel,
       occurredAt: "2025-11-11 14:30",
       label: "심박수 이상",
       address: "현재 심박수 145 bpm",
@@ -100,58 +159,57 @@ const MOCK_BIO = {
     },
     {
       id: "h2",
-      targetName: "김민준",
-      occurredAt: "2025-11-10 20:30",
-      label: "심박수 미감지",
-      address: "웨어러블 기기에서 심박수 값이 수신되지 않음",
-      value: "미감지",
-      valueColor: "#1267FF",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 11:55",
+      label: "심박수 이상",
+      address: "현재 심박수 138 bpm",
+      value: "138 bpm",
+      valueColor: "#FF2F45",
     },
-  ] as BioAlert[],
+    {
+      id: "h3",
+      targetName: targetLabel,
+      occurredAt: "2025-11-11 08:21",
+      label: "심박수 이상",
+      address: "현재 심박수 142 bpm",
+      value: "142 bpm",
+      valueColor: "#FF2F45",
+    },
+  ];
 
-  motion: [
+  const motionAlerts: BioAlert[] = [
     {
       id: "m1",
-      targetName: "김민준",
+      targetName: targetLabel,
       occurredAt: "2025-11-11 13:10",
       label: "움직임 없음",
       address: "30분 이상 움직임 없음",
       value: "30분",
       valueColor: "#F59E0B",
     },
-    {
-      id: "m2",
-      targetName: "김민준",
-      occurredAt: "2025-11-10 11:20",
-      label: "움직임 없음",
-      address: "20분 이상 움직임 없음",
-      value: "20분",
-      valueColor: "#F59E0B",
-    },
-  ] as BioAlert[],
-};
-
-export default function AlertScreen() {
-  const router = useRouter();
-
-  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
-  const [tab, setTab] = useState<TabType>("location");
-  const [bioTab, setBioTab] = useState<BioTabType>("heart");
-
-  const [emergencyAlerts, setEmergencyAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.emergency);
-  const [outAlerts, setOutAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.out);
-  const [backAlerts, setBackAlerts] = useState<LocationAlert[]>(MOCK_LOCATION.back);
-
-  const [devices, setDevices] = useState<DeviceStatus[]>(MOCK_DEVICES);
-  const [heartAlerts, setHeartAlerts] = useState<BioAlert[]>(MOCK_BIO.heart);
-  const [motionAlerts, setMotionAlerts] = useState<BioAlert[]>(MOCK_BIO.motion);
+  ];
 
   const loadProfile = useCallback(async () => {
     try {
-      const [savedProfile, savedAccountId] = await Promise.all([
+      const [savedProfile, savedAccountId, savedRole, savedTargets] = await Promise.all([
         AsyncStorage.getItem(PROFILE_KEY),
         AsyncStorage.getItem(ACCOUNT_ID_KEY),
+        AsyncStorage.getItem(CURRENT_USER_ROLE_KEY),
+        AsyncStorage.getItem(TARGETS_KEY),
       ]);
+
+      setCurrentUserRole(savedRole);
+
+      if (savedTargets) {
+        try {
+          const parsedTargets = JSON.parse(savedTargets) as Target[];
+          setLinkedTargets(Array.isArray(parsedTargets) ? parsedTargets : []);
+        } catch {
+          setLinkedTargets([]);
+        }
+      } else {
+        setLinkedTargets([]);
+      }
 
       if (savedProfile) {
         const parsed = JSON.parse(savedProfile) as Partial<Profile>;
@@ -186,10 +244,7 @@ export default function AlertScreen() {
     }, [loadProfile, loadRealtimeAlerts])
   );
 
-  const activeBioAlerts = useMemo(() => {
-    if (bioTab === "heart") return heartAlerts;
-    return motionAlerts;
-  }, [bioTab, heartAlerts, motionAlerts]);
+  const activeBioAlerts = bioTab === "heart" ? heartAlerts : motionAlerts;
 
   return (
     <View style={styles.safe}>
@@ -274,7 +329,7 @@ export default function AlertScreen() {
                 <Text style={styles.deviceTitle}>웨어러블 기기 상태</Text>
               </View>
 
-              <DeviceListCard devices={devices} />
+              <DeviceListCard devices={deviceStatuses} />
 
               <View style={styles.eventTitleRow}>
                 <Ionicons name="time-outline" size={15} color="#1267FF" />
@@ -306,14 +361,20 @@ export default function AlertScreen() {
                     showsVerticalScrollIndicator={activeBioAlerts.length > 2}
                     contentContainerStyle={styles.locationListContent}
                   >
-                    {activeBioAlerts.map((item, index) => (
-                      <BioAlertCard
-                        key={item.id}
-                        item={item}
-                        bioTab={bioTab}
-                        isLast={index === activeBioAlerts.length - 1}
-                      />
-                    ))}
+                    {activeBioAlerts.length === 0 ? (
+                      <View style={styles.emptyAlertBox}>
+                        <Text style={styles.emptyAlertText}>해당 알림 내역이 없습니다.</Text>
+                      </View>
+                    ) : (
+                      activeBioAlerts.map((item, index) => (
+                        <BioAlertCard
+                          key={item.id}
+                          item={item}
+                          bioTab={bioTab}
+                          isLast={index === activeBioAlerts.length - 1}
+                        />
+                      ))
+                    )}
                   </ScrollView>
                 </View>
               </View>
@@ -360,15 +421,21 @@ function LocationGroupCard({
           showsVerticalScrollIndicator={alerts.length > 2}
           contentContainerStyle={styles.locationListContent}
         >
-          {alerts.map((item, index) => (
-            <LocationAlertCard
-              key={item.id}
-              type={type}
-              label={badgeLabel}
-              item={item}
-              isLast={index === alerts.length - 1}
-            />
-          ))}
+          {alerts.length === 0 ? (
+            <View style={styles.emptyAlertBox}>
+              <Text style={styles.emptyAlertText}>해당 알림 내역이 없습니다.</Text>
+            </View>
+          ) : (
+            alerts.map((item, index) => (
+              <LocationAlertCard
+                key={item.id}
+                type={type}
+                label={badgeLabel}
+                item={item}
+                isLast={index === alerts.length - 1}
+              />
+            ))
+          )}
         </ScrollView>
       </View>
     </View>
@@ -742,6 +809,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#475569",
+  },
+
+  emptyAlertBox: {
+    flex: 1,
+    minHeight: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 15,
+    backgroundColor: "#FFFFFF",
+  },
+  emptyAlertText: {
+    width: "100%",
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#94A3B8",
   },
 
   deviceTitleRow: {
