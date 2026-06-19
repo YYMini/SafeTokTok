@@ -63,6 +63,19 @@ type ChildApiResponse = {
   longitude?: number | null;
 };
 
+type WatchTelemetryApiResponse = {
+  childId: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  heartRate?: number | null;
+  recordedAt?: number | null;
+  source?: string | null;
+};
+
+type WatchTelemetryItem = WatchTelemetryApiResponse & {
+  name: string;
+};
+
 type ConnectionApiResponse = {
   id: number;
   name: string;
@@ -540,6 +553,7 @@ function MapPlaceholder({
   const latestUserIdRef = useRef<number | null>(currentUserId);
   const latestUserRoleRef = useRef<string | null>(currentUserRole);
   const latestTargetsRef = useRef<MapTarget[]>([]);
+  const latestLinkedTargetsRef = useRef<Target[]>(linkedTargets);
   const markerLabelByUserIdRef = useRef<Record<string, string>>({});
   const sosStateRef = useRef<{
     active: boolean;
@@ -556,6 +570,7 @@ function MapPlaceholder({
   const isProgrammaticFitChangeRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [errorText, setErrorText] = useState("");
+  const [watchTelemetry, setWatchTelemetry] = useState<WatchTelemetryItem[]>([]);
   const [showRouteInfo, setShowRouteInfo] = useState(false);
   const [routeTargetModalOpen, setRouteTargetModalOpen] = useState(false);
   const [selectedRouteTarget, setSelectedRouteTarget] = useState<MapTarget | null>(null);
@@ -948,6 +963,10 @@ function MapPlaceholder({
     };
   }, [sosActive, sosRequesterId, sosRequesterUserId]);
 
+  useEffect(() => {
+    latestLinkedTargetsRef.current = linkedTargets;
+  }, [linkedTargets]);
+
   const renderMarkers = (targets: MapTarget[]) => {
     if (!window.kakao?.maps || !mapInstanceRef.current) return;
     const validTargets = targets.filter((target) =>
@@ -1047,6 +1066,105 @@ function MapPlaceholder({
 
   const sendMobileMapCommand = (type: string, payload: Record<string, unknown> = {}) => {
     mobileWebViewRef.current?.postMessage(JSON.stringify({ type, ...payload }));
+  };
+
+  const getWatchTargetName = (childId: number) => {
+    const matched = latestLinkedTargetsRef.current.find((target) => {
+      const numericId = String(target.id).match(/\d+$/)?.[0];
+      return Number(numericId) === childId;
+    });
+    if (matched?.name) return matched.name;
+    if (latestUserRoleRef.current === "CHILD" && latestUserIdRef.current === childId) {
+      return "내 워치";
+    }
+    return `자녀 ${childId}`;
+  };
+
+  const normalizeWatchTelemetry = (payload: unknown): WatchTelemetryApiResponse[] => {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload as WatchTelemetryApiResponse[];
+
+    if (typeof payload === "object") {
+      const telemetry = payload as Partial<WatchTelemetryApiResponse>;
+      if (typeof telemetry.childId === "number") {
+        return [telemetry as WatchTelemetryApiResponse];
+      }
+
+      return Object.values(payload as Record<string, WatchTelemetryApiResponse | null>)
+        .filter((item): item is WatchTelemetryApiResponse => !!item);
+    }
+
+    return [];
+  };
+
+  const mergeWatchTargets = (
+    locationTargets: MapTarget[],
+    telemetryItems: WatchTelemetryItem[],
+  ) => {
+    const merged = new Map<number, MapTarget>();
+    locationTargets.forEach((target) => merged.set(target.userId, target));
+
+    telemetryItems.forEach((item) => {
+      if (
+        typeof item.latitude !== "number" ||
+        typeof item.longitude !== "number" ||
+        !isKakaoMapCoordinate(item.latitude, item.longitude)
+      ) {
+        return;
+      }
+
+      merged.set(item.childId, {
+        userId: item.childId,
+        name: `${item.name} 워치`,
+        loginId: `${item.name} 워치`,
+        latitude: item.latitude,
+        longitude: item.longitude,
+      });
+    });
+
+    return Array.from(merged.values());
+  };
+
+  const fetchLatestWatchTelemetry = async (locationTargets: MapTarget[] = []) => {
+    const userId = latestUserIdRef.current;
+    const userRole = latestUserRoleRef.current;
+    if (!userId) return locationTargets;
+
+    try {
+      const endpoint =
+        userRole === "CHILD"
+          ? `${API_BASE_URL}/api/watch/telemetry/latest/${userId}`
+          : `${API_BASE_URL}/api/watch/telemetry/latest`;
+      const response = await fetch(endpoint, {
+        headers: { "X-User-Id": String(userId) },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const linkedChildIds = new Set(
+        latestLinkedTargetsRef.current
+          .map((target) => Number(String(target.id).match(/\d+$/)?.[0]))
+          .filter((id) => Number.isFinite(id)),
+      );
+      const telemetryItems = normalizeWatchTelemetry(payload)
+        .filter((item) => {
+          if (userRole === "CHILD") return item.childId === userId;
+          return linkedChildIds.size === 0 || linkedChildIds.has(item.childId);
+        })
+        .map((item) => ({
+          ...item,
+          name: getWatchTargetName(item.childId),
+        }));
+
+      setWatchTelemetry(telemetryItems);
+      return mergeWatchTargets(locationTargets, telemetryItems);
+    } catch (error) {
+      console.log("워치 생체정보 조회 실패", error);
+      return locationTargets;
+    }
   };
 
   const getCurrentMarkerName = (latitude?: number, longitude?: number) => {
@@ -1598,18 +1716,19 @@ function MapPlaceholder({
               };
             })
         : [];
+      const mergedTargets = await fetchLatestWatchTelemetry(validData);
 
-      if (validData.length > 0) {
+      if (mergedTargets.length > 0) {
         if (Platform.OS === "web") {
-          renderMarkers(validData);
+          renderMarkers(mergedTargets);
           if (showRouteInfo && !keepFitModeRef.current) {
-            const routeTarget = selectedRouteTarget ?? validData[0];
+            const routeTarget = selectedRouteTarget ?? mergedTargets[0];
             setTimeout(() => drawWebRoute(routeTarget), 0);
           }
         } else {
-          renderMobileMarkers(validData);
+          renderMobileMarkers(mergedTargets);
           if (showRouteInfo && !keepFitModeRef.current) {
-            const routeTarget = selectedRouteTarget ?? validData[0];
+            const routeTarget = selectedRouteTarget ?? mergedTargets[0];
             sendMobileMapCommand("routeOn", {
               targetId: routeTarget?.userId,
               targetName: routeTarget?.name,
@@ -2114,6 +2233,8 @@ function MapPlaceholder({
           style={{ flex: 1, backgroundColor: "#DCEEFF" }}
         />
 
+        <WatchTelemetryPanel items={watchTelemetry} />
+
         <MapOverlayControls
           showRouteInfo={showRouteInfo}
           mapMode={isRoadviewOpen ? "roadview" : mapMode}
@@ -2225,6 +2346,8 @@ function MapPlaceholder({
           backgroundColor: "#D1D5DB",
         }}
       />
+
+      <WatchTelemetryPanel items={watchTelemetry} />
 
       <MapOverlayControls
         showRouteInfo={showRouteInfo}
@@ -2396,6 +2519,52 @@ function MapModeScreen({
         <Text style={styles.modeTitle}>{title}</Text>
         <Text style={styles.modeDescription}>{description}</Text>
       </View>
+    </View>
+  );
+}
+
+const formatWatchTime = (recordedAt?: number | null) => {
+  if (!recordedAt) return "수신 대기";
+  return new Date(recordedAt).toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+function WatchTelemetryPanel({ items }: { items: WatchTelemetryItem[] }) {
+  const latestItems = items
+    .slice()
+    .sort((a, b) => (b.recordedAt ?? 0) - (a.recordedAt ?? 0))
+    .slice(0, 2);
+
+  if (latestItems.length === 0) return null;
+
+  return (
+    <View style={styles.watchPanel} pointerEvents="none">
+      <View style={styles.watchPanelHeader}>
+        <Ionicons name="watch-outline" size={16} color={COLORS.primary} />
+        <Text style={styles.watchPanelTitle}>워치 생체정보</Text>
+      </View>
+      {latestItems.map((item) => (
+        <View key={`${item.childId}-${item.recordedAt ?? "latest"}`} style={styles.watchRow}>
+          <View style={styles.watchNameRow}>
+            <Text style={styles.watchName} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.watchTime}>{formatWatchTime(item.recordedAt)}</Text>
+          </View>
+          <View style={styles.watchMetricRow}>
+            <Ionicons name="heart" size={14} color={COLORS.danger} />
+            <Text style={styles.watchMetricText}>
+              {typeof item.heartRate === "number" ? `${Math.round(item.heartRate)} bpm` : "심박 대기"}
+            </Text>
+            <Ionicons name="location" size={14} color={COLORS.primary} />
+            <Text style={styles.watchMetricText}>
+              {typeof item.latitude === "number" && typeof item.longitude === "number"
+                ? "위치 수신"
+                : "위치 대기"}
+            </Text>
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
@@ -3088,7 +3257,7 @@ function ProfileModal({
     }, 180);
   };
 
-  const enterEdit = (field: "userId" | "email" | "phone") => {
+  const enterEdit = (field: "userId" | "email" | "phone" | "age") => {
     setEditingName(false);
     clearTooltipTimer();
     setTooltipField(null);
@@ -3115,6 +3284,9 @@ function ProfileModal({
         const len = draft.email.length;
         setEmailSelection({ start: len, end: len });
         emailRef.current?.focus();
+      }
+      if (field === "age") {
+        ageRef.current?.focus();
       }
     }, 0);
   };
@@ -4040,6 +4212,65 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
 
   map: { flex: 1, backgroundColor: "#DCEEFF", position: "relative" },
+  watchPanel: {
+    position: "absolute",
+    left: 76,
+    right: 84,
+    bottom: 82,
+    maxHeight: 142,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    zIndex: 19,
+    ...SHADOW.card,
+  },
+  watchPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 6,
+  },
+  watchPanelTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  watchRow: {
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(15,23,42,0.08)",
+    gap: 4,
+  },
+  watchNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  watchName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#111827",
+  },
+  watchTime: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  watchMetricRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexWrap: "wrap",
+  },
+  watchMetricText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#334155",
+    marginRight: 5,
+  },
   sosToastWrap: {
     position: "absolute",
     top: Platform.select({ ios: 31, android: 23, default: 23 }),

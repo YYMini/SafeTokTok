@@ -26,6 +26,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.DateFormat;
+import java.util.Date;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +55,7 @@ public class TelemetryService extends Service implements SensorEventListener, Lo
 
         startHeartRateUpdates();
         startLocationUpdates();
+        updateStatus("Waiting for watch sensor data...");
 
         scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleAtFixedRate(this::sendTelemetry, 3L, SEND_INTERVAL_SECONDS, TimeUnit.SECONDS);
@@ -117,9 +120,11 @@ public class TelemetryService extends Service implements SensorEventListener, Lo
         Location location = lastLocation;
         Float heartRate = lastHeartRate;
         if (location == null && heartRate == null) {
+            updateStatus("Waiting for GPS or heart rate...");
             return;
         }
 
+        HttpURLConnection connection = null;
         try {
             JSONObject body = new JSONObject();
             body.put("childId", childId);
@@ -130,7 +135,7 @@ public class TelemetryService extends Service implements SensorEventListener, Lo
             body.put("source", "galaxy-watch");
 
             byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
-            HttpURLConnection connection = (HttpURLConnection) new URL(serverUrl).openConnection();
+            connection = (HttpURLConnection) new URL(serverUrl).openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(5_000);
             connection.setReadTimeout(5_000);
@@ -145,10 +150,19 @@ public class TelemetryService extends Service implements SensorEventListener, Lo
             int responseCode = connection.getResponseCode();
             if (responseCode < 200 || responseCode >= 300) {
                 Log.w(TAG, "Telemetry failed with HTTP " + responseCode);
+                updateStatus("Send failed: HTTP " + responseCode);
+            } else {
+                String sentAt = DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date());
+                updateStatus("Sent HTTP " + responseCode + " at " + sentAt);
             }
-            connection.disconnect();
         } catch (Exception exception) {
             Log.w(TAG, "Telemetry send failed", exception);
+            String message = exception.getMessage();
+            updateStatus("Send error: " + (message == null ? exception.getClass().getSimpleName() : message));
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
@@ -178,6 +192,14 @@ public class TelemetryService extends Service implements SensorEventListener, Lo
 
     @Override
     public void onProviderDisabled(String provider) {
+        updateStatus("GPS is disabled");
+    }
+
+    private void updateStatus(String status) {
+        getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(MainActivity.KEY_TELEMETRY_STATUS, status)
+                .apply();
     }
 
     private Notification createNotification() {
